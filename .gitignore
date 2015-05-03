@@ -1,0 +1,6 @@
+*.pyc
+.vagrant
+Vagrantfile
+*.iml
+*.ipr
+*.iws

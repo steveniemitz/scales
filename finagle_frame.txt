@@ -1,0 +1,44 @@
+Message Length (0-3)
+00 00 00 95 
+
+Message type (4)
+02 
+
+Tag (5-7)
+00 00 02  
+
+# Contexts
+00 02 
+
+	# Key len
+	00 28 
+
+	# Key
+	63 6f 6d 2e 74 77 69 74 74 65 72 2e 66 69 6e 61 67 6c 65 2e 74 72 61 63 69 6e 67 2e 54 72 61 63 65 43 6f 6e 74 65 78 74 #com.twitter.finagle.tracing.TraceContext
+
+	# Value Len
+	00 20
+	
+	# Value
+	2b 3e 65 06 70 4f ff b9 2b 3e 65 06 70 4f ff b9 2b 3e 65 06 70 4f ff b9 00 00 00 00 00 00 00 00
+	
+	# Key len
+	00 1c
+	
+	# Key
+	63 6f 6d 2e 74 77 69 74 74 65 72 2e 66 69 6e 61 67 6c 65 2e 44 65 61 64 6c 69 6e 65  #com.twitter.finagle.Deadline
+	
+	# Value Len
+	00 10
+	
+	# Value
+	13 da 92 9a c2 7a cb 40 7f ff ff ff ff ff ff ff
+	 
+# dstbytes len
+00 00
+
+# dtab len
+00 00
+	 
+# Message body
+....
