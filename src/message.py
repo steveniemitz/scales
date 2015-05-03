@@ -29,14 +29,23 @@ class Deadline(Marshallable):
   def GetSize(self):
     return 16
 
+BUFFER_SIZE = 1024 * 100 # 100kb
+def pipe_io(src, dst):
+  while True:
+    read = src.read(BUFFER_SIZE)
+    if read:
+      dst.write(read)
+    else:
+      break
 
 class Message(Marshallable):
   def __init__(self, msg_type):
     self._tag = None
     self._type = msg_type
 
-  def _EnsureTag(self):
-    if not self.tag:
+  @staticmethod
+  def _EnsureTag(tag):
+    if tag is None:
       raise Exception("Tag was unset on message during serialization.")
 
   @property
@@ -47,9 +56,11 @@ class Message(Marshallable):
   def tag(self, value):
     self._tag = value
 
-  def _EncodeTag(self):
-    self._EnsureTag()
-    return [self._tag >> 16 & 0xff, self._tag >> 8 & 0xff, self._tag & 0xff] # Tag
+  def _EncodeTag(self, tag=None):
+    if tag is None:
+      tag = self.tag
+    self._EnsureTag(tag)
+    return [tag >> 16 & 0xff, tag >> 8 & 0xff, tag & 0xff] # Tag
 
   def _WriteHeader(self, buf, data_len):
     total_len = 1 + 3 + data_len
@@ -100,11 +111,12 @@ class DispatchMessage(Message):
       v.Marshal(buf)
 
   def Marshal(self, buf):
-    data_length = self._GetContextSize() + 2 + 2 + len(self._data)
+    data_length = self._GetContextSize() + 2 + 2 + self._data.tell()
     self._WriteHeader(buf, data_length)
     self._WriteContext(buf)
     buf.write(pack('!hh', 0, 0)) # len(dst), len(dtab), both unsupported
-    buf.write(self._data)
+    self._data.seek(0)
+    pipe_io(self._data, buf)
 
 
 class PingMessage(Message):
@@ -115,16 +127,40 @@ class PingMessage(Message):
     self._WriteHeader(buf, 0)
 
 
-class RdispatchMessage(Message):
+class DiscardedMessage(Message):
+  def __init__(self, which, reason):
+    super(DiscardedMessage, self).__init__(MessageType.BAD_Tdiscarded)
+    self._reason = reason
+    self._which = which
+
+  def Marshal(self, buf):
+    self._WriteHeader(buf, 3 + len(self._reason))
+    buf.write(pack('!BBB', *self._EncodeTag(self._which)))
+    buf.write(self._reason)
+
+
+class RMessage(object):
+  def __init__(self, msg_type, err=None):
+    self._type = msg_type
+    self._err = None
+
+  @property
+  def err(self):
+    return self._err
+
+  @property
+  def type(self):
+    return self._type
+
+class RdispatchMessage(RMessage):
   class Rstatus:
     OK = 0
     ERROR = 1
     NACK = 2
 
   def __init__(self, buf=None, err=None):
-    super(RdispatchMessage, self).__init__(MessageType.Rdispatch)
+    super(RdispatchMessage, self).__init__(MessageType.Rdispatch, err)
     self.buf = buf
-    self.err = err
 
   @staticmethod
   def _ReadContext(buf):

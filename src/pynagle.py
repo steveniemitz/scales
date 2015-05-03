@@ -8,15 +8,16 @@ class TMuxTransport(TFramedTransport):
     TFramedTransport.__init__(self, None)
 
   def flush(self):
-    payload = getattr(self, '_TFramedTransport__wbuf').getvalue()
+    payload = getattr(self, '_TFramedTransport__wbuf')
     setattr(self, '_TFramedTransport__wbuf', StringIO())
-    self._read_future = self._dispatcher.SendDispatchMessage(payload, 5)
+    self._read_future = self._dispatcher.SendDispatchMessage(payload, 1.5)
 
   def readFrame(self):
     if self._read_future is None:
       raise Exception("Unexpected read!")
     else:
-      setattr(self, '_TFramedTransport__rbuf', self._read_future.get())
+      msg = self._read_future.get()
+      setattr(self, '_TFramedTransport__rbuf', msg.buf)
       self._read_future = None
 
   def open(self):
