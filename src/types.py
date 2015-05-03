@@ -7,3 +7,8 @@ class MessageType(object):
 
   Tdiscarded = 66
   BAD_Tdiscarded = -62
+
+
+class DispatcherState(object):
+  RUNNING = 1
+  FAULTED = 2

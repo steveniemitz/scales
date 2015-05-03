@@ -5,7 +5,9 @@ import gevent
 from gevent.event import AsyncResult
 from gevent.queue import Queue
 
-from types import MessageType
+from types import (
+  DispatcherState,
+  MessageType)
 from message import (
   Deadline,
   DiscardedMessage,
@@ -15,6 +17,7 @@ from message import (
   PingMessage)
 
 class ServerException(Exception):  pass
+class DispatcherException(Exception): pass
 class TimeoutException(Exception): pass
 
 class TagPool(object):
@@ -50,6 +53,8 @@ class MessageDispatcher(object):
     self._tag_pool = TagPool()
     self._send_queue = Queue()
     self._tag_map = {}
+    self._state = DispatcherState.RUNNING
+    self._exception = None
     self._handlers = {
       MessageType.Rdispatch: self.Handlers.Rdispatch,
       MessageType.Rping: self.Handlers.Rping,
@@ -60,14 +65,26 @@ class MessageDispatcher(object):
 
   def _SendLoop(self):
     while True:
-      payload = self._send_queue.get()
-      self._socket.write(payload)
+      try:
+        payload = self._send_queue.get()
+        self._socket.write(payload)
+      except Exception as e:
+        self._exception = e
+        self._state = DispatcherState.FAULTED
+        self.Shutdown()
+        break
 
   def _RecvLoop(self):
     while True:
-      sz, = unpack('!i', self._socket.readAll(4))
-      buf = StringIO(self._socket.readAll(sz))
-      gevent.spawn(self._RecvMessage, buf)
+      try:
+        sz, = unpack('!i', self._socket.readAll(4))
+        buf = StringIO(self._socket.readAll(sz))
+        gevent.spawn(self._RecvMessage, buf)
+      except Exception as e:
+        self._exception = e
+        self._state = DispatcherState.FAULTED
+        self.Shutdown()
+        break
 
   def _PingLoop(self):
     while True:
@@ -83,15 +100,21 @@ class MessageDispatcher(object):
 
   def _RecvMessage(self, msg):
     msg_type, tag = self._ReadHeader(msg)
+    msg_cls = None
+    processing_excr = None
     try:
       msg_cls = self._handlers[msg_type](msg)
+    except Exception as e:
+      processing_excr = e
     finally:
       ar = self._ReleaseTag(tag)
-    if ar:
-      if msg_cls.err:
-        ar.set_exception(ServerException(msg_cls.err))
-      else:
-        ar.set(msg_cls)
+      if ar:
+        if processing_excr:
+          ar.set_exception(DispatcherException('An exception occured while processing a message.', processing_excr))
+        elif msg_cls.err:
+          ar.set_exception(ServerException(msg_cls.err))
+        else:
+          ar.set(msg_cls)
 
   def _ReleaseTag(self, tag):
     ar = self._tag_map.pop(tag, None)
@@ -112,6 +135,9 @@ class MessageDispatcher(object):
     return self._SendMessage(ping_msg)
 
   def _SendMessage(self, msg, timeout=None, oneway=False):
+    if self._state != DispatcherState.RUNNING:
+      raise Exception("Dispatcher is not in a state to accept messages.")
+
     if oneway:
       msg.tag = 0
     else:
@@ -142,3 +168,8 @@ class MessageDispatcher(object):
   def _InitTimeout(self, ar, timeout, tag):
     if timeout:
       gevent.spawn(self._TimeoutHelper, ar, timeout, tag)
+
+  def Shutdown(self):
+    # Shutdown all pending calls
+    for ar in self._tag_map.values():
+      ar.set_exception(DispatcherException("The dispatcher is shutting down."))
