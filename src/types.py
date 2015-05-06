@@ -10,5 +10,9 @@ class MessageType(object):
 
 
 class DispatcherState(object):
-  RUNNING = 1
-  FAULTED = 2
+  STARTING = 1
+  RUNNING = 2
+  SHUTTING_DOWN = 3
+  STOPPED = 4
+  FAULTED = 5
+  PING_TIMEOUT = 6

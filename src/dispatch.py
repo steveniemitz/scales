@@ -21,60 +21,121 @@ class DispatcherException(Exception): pass
 class TimeoutException(Exception): pass
 
 class TagPool(object):
-  def __init__(self):
+  """A class which manages a pool of tags
+  """
+  def __init__(self, max_tag):
     self._set = set()
     self._next = 1
+    self._max_tag = max_tag
 
   def get(self):
+    """Get a tag from the pool.
+
+    Returns:
+      A tag
+
+    Raises:
+      Exception if the next tag will be > max_tag
+    """
     if not any(self._set):
+      if self._next == self._max_tag - 1:
+        raise Exception("No tags left in pool.")
+
       self._next += 1
       return self._next
     else:
       return self._set.pop()
 
   def release(self, tag):
+    """Return a tag to the pool.
+
+    Args:
+      tag - The previously leased tag.
+    """
     self._set.add(tag)
 
 
-class MessageDispatcher(object):
+class MuxMessageDispatcher(object):
+  """Handles dispatching incoming and outgoing messages to a socket.
+  """
   class Handlers(object):
+    """Handlers for recieved messages.
+
+    All handlers take a raw message (in bytes) and return an object.
+    """
     @staticmethod
     def Rdispatch(msg):
+      """Handle an Rdispatch message (response to a dispatch message.)
+      """
       msg_cls = RdispatchMessage.Unmarshal(msg)
       return msg_cls
 
     @staticmethod
     def Rping(msg):
+      """Handle a Rping message (response to a ping.)
+      """
       return RMessage(MessageType.Rping)
 
-  def __init__(self, socket):
+  def __init__(self, socket, dispatch_timeout=10):
+    """
+    Args:
+      socket - An instance of a TSocket or greater.  THealthySocket is prefered.
+      timeout - The default timeout in seconds for any dispatch messages.
+    """
+    self._state = DispatcherState.STARTING
     self._socket = socket
-    self._socket.open()
     self._tag_pool = TagPool()
     self._send_queue = Queue()
     self._tag_map = {}
-    self._state = DispatcherState.RUNNING
     self._exception = None
+    self._ping_timeout = 5
+    self._ping_ar = None
     self._handlers = {
       MessageType.Rdispatch: self.Handlers.Rdispatch,
       MessageType.Rping: self.Handlers.Rping,
     }
-    gevent.spawn(self._SendLoop)
-    gevent.spawn(self._RecvLoop)
-    gevent.spawn(self._PingLoop)
+    self._shutdown_ar = AsyncResult()
+    self._dispatch_timeout = dispatch_timeout
+
+  @property
+  def state(self):
+    """The current state of the dispatcher.
+    """
+    return self._state
+
+  @property
+  def isRunning(self):
+    """Returns true if state == RUNNING
+    """
+    return self.state == DispatcherState.RUNNING
+
+  @property
+  def shutdown_result(self):
+    """An instance of AsyncResult representing the state of the dispatcher.
+    When the dispatcher shuts down, this result will be signaled.
+    """
+    return self._shutdown_ar
 
   def _SendLoop(self):
+    """Dispatch messages from the send queue to the remote server.
+
+    Note: Messages in the queue have already been serialized into wire format.
+    """
     while True:
       try:
         payload = self._send_queue.get()
         self._socket.write(payload)
       except Exception as e:
         self._exception = e
-        self._state = DispatcherState.FAULTED
-        self.Shutdown()
+        self.Shutdown(DispatcherState.FAULTED)
         break
 
   def _RecvLoop(self):
+    """Dispatch messages from the remote server to their recipient.
+
+    Note: Deserialization and dispatch occurs on a seperate greenlet, this only
+    reads the message off the wire.
+    """
     while True:
       try:
         sz, = unpack('!i', self._socket.readAll(4))
@@ -82,23 +143,43 @@ class MessageDispatcher(object):
         gevent.spawn(self._RecvMessage, buf)
       except Exception as e:
         self._exception = e
-        self._state = DispatcherState.FAULTED
-        self.Shutdown()
+        self.Shutdown(DispatcherState.FAULTED)
         break
 
   def _PingLoop(self):
+    """Periodically pings the remote server.
+    """
     while True:
       gevent.sleep(30)
-      self._SendPingMessage()
+      if self.isRunning:
+        ar = self._SendPingMessage()
+        ar.rawlink(self._OnPingResponse)
+        self._ping_ar = ar
+      else:
+        break
 
   @staticmethod
   def _ReadHeader(msg):
+    """Read a mux header off a message.
+
+    Args:
+      msg - a byte buffer of raw data.
+
+    Returns:
+      A tuple of (message_type, tag)
+    """
     header, = unpack('!i', msg.read(4))
     msg_type = (256 - (header >> 24 & 0xff)) * -1
     tag = ((header << 8) & 0xFFFFFFFF) >> 8
     return msg_type, tag
 
   def _RecvMessage(self, msg):
+    """Read and dispatch a full message from raw data.  This method never throws
+    and returns nothing, all dispatch is expected to occur within.
+
+    Args:
+      msg - The raw message bytes.
+    """
     msg_type, tag = self._ReadHeader(msg)
     msg_cls = None
     processing_excr = None
@@ -107,21 +188,50 @@ class MessageDispatcher(object):
     except Exception as e:
       processing_excr = e
     finally:
+      # Tag 0 responses should never occur.
+      if tag == 0:
+        return
+
       ar = self._ReleaseTag(tag)
       if ar:
         if processing_excr:
-          ar.set_exception(DispatcherException('An exception occured while processing a message.', processing_excr))
+          ar.set_exception(DispatcherException(
+              'An exception occured while processing a message.',
+              processing_excr))
         elif msg_cls.err:
           ar.set_exception(ServerException(msg_cls.err))
         else:
           ar.set(msg_cls)
 
   def _ReleaseTag(self, tag):
+    """Return a tag to the tag pool.
+
+    Note: Tags are only returned when the server has ACK'd them (or NACK'd) with
+    and Rdispatch message (or similar).  Client initiated timeouts do NOT return
+    tags to the pool.
+
+    Args:
+      tag - The tag to return.
+    """
     ar = self._tag_map.pop(tag, None)
     self._tag_pool.release(tag)
     return ar
 
   def SendDispatchMessage(self, thrift_payload, timeout=None):
+    """Creates and posts a Tdispatch message to the send queue.
+
+    Args:
+      thrift_payload - A raw serialized thirft method call payload.  Note: This
+                       must NOT be framed.
+      timeout - An optional timeout.  If not set, the global dispatch timeout
+                will be applied.
+
+    Returns:
+      An AsyncResult representing the status of the method call.  This will be
+      signaled when either the call completes (successfully or from failure),
+      or after [timeout] seconds ellapse.
+    """
+    timeout = timeout or self._dispatch_timeout
     ctx = {}
     if timeout:
       ctx['com.twitter.finagle.Deadline'] = Deadline(timeout)
@@ -131,11 +241,20 @@ class MessageDispatcher(object):
     return ar
 
   def _SendPingMessage(self):
+    """Constucts and sends a Tping message.
+    """
     ping_msg = PingMessage()
-    return self._SendMessage(ping_msg)
+    return self._SendMessage(ping_msg, self._ping_timeout)
+
+  def _OnPingResponse(self, ar):
+    """Handles the response to a ping.  On failure, shuts down the dispatcher.
+    """
+    if not ar.successful():
+      self._exception = ar.exception
+      self.Shutdown(DispatcherState.PING_TIMEOUT)
 
   def _SendMessage(self, msg, timeout=None, oneway=False):
-    if self._state != DispatcherState.RUNNING:
+    if not self.isRunning:
       raise Exception("Dispatcher is not in a state to accept messages.")
 
     if oneway:
@@ -169,7 +288,37 @@ class MessageDispatcher(object):
     if timeout:
       gevent.spawn(self._TimeoutHelper, ar, timeout, tag)
 
-  def Shutdown(self):
+  def Shutdown(self, termainal_state, excr=None):
+    self._state = termainal_state
     # Shutdown all pending calls
     for ar in self._tag_map.values():
       ar.set_exception(DispatcherException("The dispatcher is shutting down."))
+    self._shutdown_ar.set(excr or self._exception)
+
+  def isOpen(self):
+    return self.state != DispatcherState.STARTING
+
+  def open(self):
+    if self.state != DispatcherState.STARTING:
+      raise Exception("Attept to call open() on an already running dispatcher.")
+
+    self._socket.open()
+    gevent.spawn(self._SendLoop)
+    gevent.spawn(self._RecvLoop)
+    self._state = DispatcherState.RUNNING
+    gevent.spawn(self._PingLoop)
+
+    ar = self._SendPingMessage()
+    # Block the open() call until we get a ping response back.
+    ar.get()
+
+  def close(self):
+    self.Shutdown(DispatcherState.STOPPED)
+
+  def testConnection(self):
+    if not self.isRunning:
+      return False
+    if hasattr(self._socket, 'testConnection'):
+      return self._socket.testConnection()
+    else:
+      return True

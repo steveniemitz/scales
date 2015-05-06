@@ -98,9 +98,6 @@ class DispatchMessage(Message):
     return n
 
   def _WriteContext(self, buf):
-    if not any(self._ctx):
-      buf.write(pack('!h', 0))
-
     buf.write(pack('!h', len(self._ctx)))
     for k, v in self._ctx.iteritems():
       if not isinstance(k, basestring):
@@ -142,7 +139,7 @@ class DiscardedMessage(Message):
 class RMessage(object):
   def __init__(self, msg_type, err=None):
     self._type = msg_type
-    self._err = None
+    self._err = err
 
   @property
   def err(self):
@@ -176,5 +173,7 @@ class RdispatchMessage(RMessage):
 
     if status == cls.Rstatus.OK:
       return cls(buf)
+    elif status == cls.Rstatus.NACK:
+      return cls(err='The server returned a NACK')
     else:
       return cls(err=buf.read())

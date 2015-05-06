@@ -2,15 +2,16 @@ from cStringIO import StringIO
 from thrift.transport.TTransport import TFramedTransport
 
 class TMuxTransport(TFramedTransport):
-  def __init__(self, dispatcher):
-    self._dispatcher = dispatcher
+  def __init__(self, dispatcher_pool):
+    self._dispatcher_pool = dispatcher_pool
     self._read_future = None
     TFramedTransport.__init__(self, None)
 
   def flush(self):
     payload = getattr(self, '_TFramedTransport__wbuf')
     setattr(self, '_TFramedTransport__wbuf', StringIO())
-    self._read_future = self._dispatcher.SendDispatchMessage(payload, 1.5)
+    _, dispatcher = self._dispatcher_pool.Get()
+    self._read_future = dispatcher.SendDispatchMessage(payload)
 
   def readFrame(self):
     if self._read_future is None:
