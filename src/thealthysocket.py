@@ -18,7 +18,7 @@ def wrap_exceptions(exception_callback):
   return wrapper
 
 _VARZ_DATA = collections.defaultdict(int)
-_VARZ_PREFIX = 'coil'
+_VARZ_PREFIX = 'scales'
 
 class THealthySocket(TSocket.TSocket):
   def __init__(self, host, port, unix_socket, health_event_cb, varz_tag=None):

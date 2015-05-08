@@ -1,5 +1,5 @@
 from struct import (pack, unpack)
-from types import (MessageType)
+from types import (Enum, MessageType)
 
 class Marshallable(object):
   def Marshal(self, buf):
@@ -7,9 +7,6 @@ class Marshallable(object):
 
   @classmethod
   def Unmarshal(cls, buf):
-    raise NotImplementedError()
-
-  def GetSize(self):
     raise NotImplementedError()
 
 
@@ -23,11 +20,12 @@ class Deadline(Marshallable):
     self._ts = long(time.time()) * 1000000000 # Nanoseconds
     self._timeout = long(timeout * 1000000000)
 
+  def __len__(self):
+    return 16
+
   def Marshal(self, buf):
     buf.write(pack('!qq', self._ts, self._timeout))
 
-  def GetSize(self):
-    return 16
 
 BUFFER_SIZE = 1024 * 100 # 100kb
 def pipe_io(src, dst):
@@ -76,8 +74,6 @@ class Message(Marshallable):
   def Unmarshal(cls, buf):
     raise NotImplementedError()
 
-  def GetSize(self):
-    raise None
 
 class DispatchMessage(Message):
   def __init__(self, data, ctx=None, dst=None, dtab=None):
@@ -94,7 +90,7 @@ class DispatchMessage(Message):
       return n
     for k, v in self._ctx.iteritems():
       n += 2 + len(k)
-      n += 2 + v.GetSize()
+      n += 2 + len(v)
     return n
 
   def _WriteContext(self, buf):
@@ -104,7 +100,7 @@ class DispatchMessage(Message):
         raise NotImplementedError("Unsupported key type in context")
       k_len = len(k)
       buf.write(pack('!h%ds' % k_len, k_len, k))
-      buf.write(pack('!h', v.GetSize()))
+      buf.write(pack('!h', len(v)))
       v.Marshal(buf)
 
   def Marshal(self, buf):
@@ -149,8 +145,9 @@ class RMessage(object):
   def type(self):
     return self._type
 
+
 class RdispatchMessage(RMessage):
-  class Rstatus:
+  class Rstatus(Enum):
     OK = 0
     ERROR = 1
     NACK = 2
@@ -177,3 +174,13 @@ class RdispatchMessage(RMessage):
       return cls(err='The server returned a NACK')
     else:
       return cls(err=buf.read())
+
+
+class RerrorMessage(RMessage):
+  def __init__(self, err):
+    super(RerrorMessage, self).__init__(MessageType.Rerr, err)
+
+  @classmethod
+  def Unmarshal(cls, buf):
+    why = buf.read()
+    return cls(why)

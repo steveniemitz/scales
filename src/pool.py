@@ -5,55 +5,69 @@ Internally, Aurora uses Zookeeper for registering services.
 
 import collections
 from contextlib import contextmanager
-import functools
 import itertools
 import logging
-import posixpath
 import random
 
-LOG = logging.getLogger(__name__)
+import gevent
 
-_UNSET = '<unset>'
+LOG = logging.getLogger("scales.SingletonPool")
+
+def StaticServerSetProvider(servers, on_join, on_leave):
+  return servers
 
 def ScheduleOperationWithPeriodWorker(period, operation):
-  import gevent
   while True:
     gevent.sleep(period)
     operation()
 
 def ScheduleOperationWithPeriod(period, operation):
-  import gevent
   gevent.spawn(ScheduleOperationWithPeriodWorker, period, operation)
 
-class AcquireResourceException(Exception): pass
+class AcquirePoolMemeberException(Exception): pass
+
+class PoolMemberSelector(object):
+  def GetNextMember(self):
+    raise NotImplementedError()
+
+  def OnHealthyMembersChanged(self, all_healthy_servers):
+    pass
+
+class RoundRobinPoolMemberSelector(PoolMemberSelector):
+  def __init__(self):
+    self._next_server = None
+
+  def OnHealthyMembersChanged(self, all_healthy_servers):
+    healhy_servers = list(all_healthy_servers)
+    random.shuffle(healhy_servers)
+    self._next_server = itertools.cycle(healhy_servers)
+
+  def GetNextMember(self):
+    try:
+      return self._next_server.next()
+    except StopIteration:
+      return None
+
 
 class SingletonPool(object):
-  """A connection pool backed by service discovery running on Aurora.
+  """A pool of resources..
   """
   def __init__(
       self,
       pool_name,
       server_set_provider,
       connection_provider,
+      member_selector,
       initial_size_min_members=0,
       initial_size_factor=0,
-      timeout_ms=None,
-      no_pop=False):
+      timeout=None,
+      shareable_resources=False):
     """Initializes the resource pool.
 
-    connection_provider must implement GetConnection() and IsConnectionFault().
-      GetConnection() must return a "connection" that implements:
-        - open()
-        - isOpen()
-        - close()
-
-      IsConnectionFault must take an excpetion an return true if that exception
-        was caused by the connection failing.
-
     Args:
-      aurora_zk_client - Client to Aurora's Zookeeper service.
-      service_discovery_path - The root service discovery path in ZK.
-      aurora_zk_path - The ZK path relative to the service_discovery_path.
+      pool_name - The name of this pool to be used in logging.
+      server_set_provider - A callable that takes two parameters, on_join and on_leave,
+        and returns a server set.  A server set must be iterable.
       connection_provider - A class that provides two methods:
         GetConnection(): Must return a "connection" that implements:
           - open()
@@ -62,8 +76,7 @@ class SingletonPool(object):
 
         IsConnectionFault: Must take an excpetion an return true if that
           exception was caused by the connection failing.
-      server_set_class - Class used to manage the set of servers. Used
-                          primarily to mock out the ZK based ServerSet.
+      member_selector - An instance of a PoolMemberSelector.
       initial_size_min_members - The absolute minimum number of connections in
         the pool at startup.  The pool maybe grow or shrink after startup.
       initial_size_factor - The minimum number of connections in the pool at
@@ -74,12 +87,16 @@ class SingletonPool(object):
         initial_size_factor.
       timeout_ms - The timeout for connections in the pool, in milliseconds.
         If none, connections never time out.
+      shareable_resources - If True, connections are never removed from the pool,
+        and instead are returned to the tail.  This should be used if the
+        underlying resources are safe to share.
     """
-    self._no_pop = no_pop
+    self._shareable_resources = shareable_resources
     self._initialized = False
     self._connection_provider = connection_provider
-    self._socket_timeout_ms = timeout_ms
+    self._timeout = timeout
     self._pool_name = pool_name
+    self._member_selector = member_selector
     LOG.info("Creating SingletonPool for %s" % pool_name)
     self.server_set = server_set_provider(
       on_join=self._OnServerSetJoin,
@@ -109,6 +126,9 @@ class SingletonPool(object):
   def _AddServer(self, instance):
     """Adds a servers to the set of servers available to the connection pool.
     Note: no new connections are created at this time.
+
+    Args:
+      instance - A Member object to be added to the pool.
     """
     if not instance.service_endpoint in self._servers:
       self._servers.add(instance.service_endpoint)
@@ -118,26 +138,23 @@ class SingletonPool(object):
   def _RemoveServer(self, instance):
     """Removes a server from the connection pool.  Outstanding connections will
     be closed lazily.
+
+    Args:
+      instance - A Member object to be removed from the pool.
     """
     self._servers.discard(instance.service_endpoint)
     self._healthy_servers.discard(instance.service_endpoint)
     self._OnHealthyServersChanged()
 
   def _GetNextServer(self):
-    """To be implemented by sub-classes.  This method is called when there are
-      no connections availble to serve a GetConnection() request.
-
-    Returns:
-      A new, non-open connection.
-    """
-    raise NotImplementedError()
+    member = self._member_selector.GetNextMember()
+    if not member:
+      raise AcquirePoolMemeberException("No members were available for pool %s" %
+          self._pool_name)
+    return member
 
   def _OnHealthyServersChanged(self):
-    """To be optionally implemented by sub-classes.  This method is called when
-    the set of healthy servers in the pool changes.  Either because new members
-    joined, existing members left, or a member was marked unhealthy.
-    """
-    pass
+    self._member_selector.OnHealthyMembersChanged(self._healthy_servers)
 
   def _HealthCallback(self, shard):
     """Called by connections when they decide their connection is unhealhy.
@@ -174,8 +191,9 @@ class SingletonPool(object):
     """
     return self._connection_provider.GetConnection(
       shard,
+      self._pool_name,
       self._HealthCallback,
-      self._socket_timeout_ms)
+      self._timeout)
 
   def Get(self):
     num_retries = 0
@@ -198,7 +216,7 @@ class SingletonPool(object):
         socket = self._CreateConnection(shard)
 
       # Return the connection immediately if no_pop == True,
-      if self._no_pop:
+      if self._shareable_resources:
         self.Return(shard, socket)
 
       # We get to this point if either:
@@ -217,7 +235,7 @@ class SingletonPool(object):
           self._HealthCallback(shard)
         else:
           return shard, socket
-      except AcquireResourceException:
+      except AcquirePoolMemeberException:
         LOG.error("All nodes failed for pool %s." % self._pool_name)
         raise
       except Exception as ex:
@@ -225,13 +243,15 @@ class SingletonPool(object):
           raise
         else:
           # Mark the server unhealthy as we were unable to connect to it.
+          LOG.error("Unable to initialize pool member %s for pool %s" % (
+              str(shard), self._pool_name))
           self._HealthCallback(shard)
 
       # If we got here, we were unable to open a connection with
       # Only retry num_healhy_servers / 2 times before failing.
       num_retries+=1
       if num_retries > max_retries:
-        raise AcquireResourceException(
+        raise AcquirePoolMemeberException(
           "Unable to acquire a node in %d tries for pool %s." % (
               num_retries, self._pool_name))
 
@@ -240,13 +260,13 @@ class SingletonPool(object):
       self._socket_queue.append((server, socket))
 
   @contextmanager
-  def SafeGetConnection(self):
+  def SafeGet(self):
     shard, socket = None, None
     try:
       shard, socket = self.Get()
       yield socket
     finally:
-      if socket:
+      if socket and not self._shareable_resources:
         self.Return(shard, socket)
 
   ## ------- ZooKeeper methods --------
@@ -285,24 +305,7 @@ class SingletonPool(object):
       self._pool_name, len(self._servers)))
     ## ------- /ZooKeeper methods --------
 
-class _RoundRobinSingletonPool(SingletonPool):
-  """An AuroraSocketPool that creates sockets in a round-robin order
-  based on a random ordering of the ZK serverset."""
-  def __init__(self, *args, **kwargs):
-    self._next_server = None
-    super(_RoundRobinSingletonPool, self).__init__(*args, **kwargs)
 
-  def _OnHealthyServersChanged(self):
-    healhy_servers = list(self._healthy_servers)
-    random.shuffle(healhy_servers)
-    self._next_server = itertools.cycle(healhy_servers)
-
-  def _GetNextServer(self):
-    try:
-      return self._next_server.next()
-    except StopIteration:
-      raise AcquireResourceException('No resources were in pool %s' %
-                                     self._pool_name)
 
 class _StickySingletonPool(SingletonPool):
   """An AuroraSocketPool that creates sockets stuck to a single instance.
@@ -321,4 +324,4 @@ class _StickySingletonPool(SingletonPool):
     if self._random_server:
       return self._random_server
     else:
-      raise AcquireResourceException('No resources were in the pool')
+      raise AcquirePoolMemeberException('No resources were in the pool')

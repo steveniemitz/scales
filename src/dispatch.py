@@ -14,6 +14,7 @@ from message import (
   DispatchMessage,
   RMessage,
   RdispatchMessage,
+  RerrorMessage,
   PingMessage)
 
 class ServerException(Exception):  pass
@@ -76,15 +77,21 @@ class MuxMessageDispatcher(object):
       """
       return RMessage(MessageType.Rping)
 
+    @staticmethod
+    def Rerr(msg):
+      msg_class = RerrorMessage.Unmarshal(msg)
+      return msg_class
+
   def __init__(self, socket, dispatch_timeout=10):
     """
     Args:
       socket - An instance of a TSocket or greater.  THealthySocket is prefered.
       timeout - The default timeout in seconds for any dispatch messages.
     """
-    self._state = DispatcherState.STARTING
+    self._state = DispatcherState.UNINITIALIZED
+    self._open_result = None
     self._socket = socket
-    self._tag_pool = TagPool()
+    self._tag_pool = TagPool((2 ** 24) -1)
     self._send_queue = Queue()
     self._tag_map = {}
     self._exception = None
@@ -93,6 +100,8 @@ class MuxMessageDispatcher(object):
     self._handlers = {
       MessageType.Rdispatch: self.Handlers.Rdispatch,
       MessageType.Rping: self.Handlers.Rping,
+      MessageType.Rerr: self.Handlers.Rerr,
+      MessageType.BAD_Rerr: self.Handlers.Rerr
     }
     self._shutdown_ar = AsyncResult()
     self._dispatch_timeout = dispatch_timeout
@@ -127,7 +136,7 @@ class MuxMessageDispatcher(object):
         self._socket.write(payload)
       except Exception as e:
         self._exception = e
-        self.Shutdown(DispatcherState.FAULTED)
+        self._Shutdown(DispatcherState.FAULTED)
         break
 
   def _RecvLoop(self):
@@ -143,7 +152,7 @@ class MuxMessageDispatcher(object):
         gevent.spawn(self._RecvMessage, buf)
       except Exception as e:
         self._exception = e
-        self.Shutdown(DispatcherState.FAULTED)
+        self._Shutdown(DispatcherState.FAULTED)
         break
 
   def _PingLoop(self):
@@ -212,6 +221,9 @@ class MuxMessageDispatcher(object):
 
     Args:
       tag - The tag to return.
+
+    Returns:
+      The AsyncResult associated with the tag's response.
     """
     ar = self._tag_map.pop(tag, None)
     self._tag_pool.release(tag)
@@ -251,9 +263,20 @@ class MuxMessageDispatcher(object):
     """
     if not ar.successful():
       self._exception = ar.exception
-      self.Shutdown(DispatcherState.PING_TIMEOUT)
+      self._Shutdown(DispatcherState.PING_TIMEOUT)
 
   def _SendMessage(self, msg, timeout=None, oneway=False):
+    """Send a message to the remote host.
+
+    Args:
+      msg - The message object to serialize and send.
+      timeout - An optional timeout for the response.
+      oneway - If true, no response is expected and no event is allocated for
+               the response.  Note: messages with oneway = True always have
+               tag = 0.
+    Returns:
+      An AsyncResult representing the server response, or None if oneway=True.
+    """
     if not self.isRunning:
       raise Exception("Dispatcher is not in a state to accept messages.")
 
@@ -278,6 +301,10 @@ class MuxMessageDispatcher(object):
     return ar
 
   def _TimeoutHelper(self, ar, timeout, tag):
+    """Waits for ar to be signaled or [timeout] seconds to elapse.  If the
+    timeout elapses, a Tdiscarded message will be queued to the server indicating
+    the client is no longer expecting a reply.
+    """
     ar.wait(timeout)
     if not ar.ready():
       ar.set_exception(TimeoutException('The thrift call did not complete within the specified timeout and has been aborted.'))
@@ -285,10 +312,23 @@ class MuxMessageDispatcher(object):
       self._SendMessage(msg, oneway=True)
 
   def _InitTimeout(self, ar, timeout, tag):
+    """Initialize the timeout handler for this request.
+
+    Args:
+      ar - The AsyncResult for the pending response of this request.
+      timeout - An optional timeout.  If None, no timeout handler is initialized.
+      tag - The tag of the request.
+    """
     if timeout:
       gevent.spawn(self._TimeoutHelper, ar, timeout, tag)
 
-  def Shutdown(self, termainal_state, excr=None):
+  def _Shutdown(self, termainal_state, excr=None):
+    """Shutdown the dispatcher, no more requests will be accepted after.
+
+    Args:
+      terminal_state - The final state the dispatcher should be in after shutdown.
+      excr - The exception to record as the shutdown reason.
+    """
     self._state = termainal_state
     # Shutdown all pending calls
     for ar in self._tag_map.values():
@@ -296,26 +336,48 @@ class MuxMessageDispatcher(object):
     self._shutdown_ar.set(excr or self._exception)
 
   def isOpen(self):
-    return self.state != DispatcherState.STARTING
+    """Returns true if open() has been called on the dispatcher.
+    """
+    return self.isRunning
 
   def open(self):
-    if self.state != DispatcherState.STARTING:
-      raise Exception("Attept to call open() on an already running dispatcher.")
+    """Initializes the dispatcher, opening a connection to the remote host.
+    This method may only be called once.
+    """
+    if self.state == DispatcherState.RUNNING:
+      return
+    elif self._open_result:
+      self._open_result.get()
+      return
 
-    self._socket.open()
-    gevent.spawn(self._SendLoop)
-    gevent.spawn(self._RecvLoop)
-    self._state = DispatcherState.RUNNING
-    gevent.spawn(self._PingLoop)
+    self._open_result = AsyncResult()
+    try:
+      self._state = DispatcherState.STARTING
+      self._socket.open()
+      gevent.spawn(self._SendLoop)
+      gevent.spawn(self._RecvLoop)
+      self._state = DispatcherState.RUNNING
+      gevent.spawn(self._PingLoop)
 
-    ar = self._SendPingMessage()
-    # Block the open() call until we get a ping response back.
-    ar.get()
+      ar = self._SendPingMessage()
+      # Block the open() call until we get a ping response back.
+      ar.get()
+      self._open_result.set('open')
+
+    except Exception as e:
+      self._open_result.set_exception(e)
 
   def close(self):
-    self.Shutdown(DispatcherState.STOPPED)
+    """Close the dispatcher, shutting it down and denying any future requests
+    over it.
+    """
+    self._Shutdown(DispatcherState.STOPPED)
 
   def testConnection(self):
+    """Test the dispatcher's connection to the remote server.  Returns true if
+    the dispatcher is running and (if supported) the underlying socket's
+    testConnection() returns True.
+    """
     if not self.isRunning:
       return False
     if hasattr(self._socket, 'testConnection'):
