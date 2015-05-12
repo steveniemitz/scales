@@ -14,8 +14,8 @@ monkey.patch_all(thread=False)
 if __name__ == '__main__':
   def fn():
     from gen_py.hello import Hello
-    client = ThriftMux.newService(Hello.Client, 'localhost:8080')
-
+    client = ThriftMux.newService(Hello.Client, 'tcp://localhost:8080')
+    client.hi('test')
     def fn2(n):
       for x in range(20):
         print '%d %s' % (n, client.hi('from %d test %s' % (n, x)))

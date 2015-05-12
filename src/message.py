@@ -1,5 +1,5 @@
 from struct import (pack, unpack)
-from types import (Enum, MessageType)
+from ttypes import (Enum, MessageType)
 
 class Marshallable(object):
   def Marshal(self, buf):

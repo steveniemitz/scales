@@ -16,8 +16,15 @@ try:
 except:
   fastbinary = None
 
+class BaseIface:
+  def base_hi(self):
+    pass
 
-class Iface:
+class BaseClient(BaseIface):
+  def base_hi(self):
+    pass
+
+class Iface(BaseIface):
   def hi(self, data):
     """
     Parameters:
@@ -26,7 +33,7 @@ class Iface:
     pass
 
 
-class Client(Iface):
+class Client(BaseClient, Iface):
   def __init__(self, iprot, oprot=None):
     self._iprot = self._oprot = iprot
     if oprot is not None:
@@ -40,6 +47,9 @@ class Client(Iface):
     """
     self.send_hi(data)
     return self.recv_hi()
+
+  def base_hi(self):
+    pass
 
   def send_hi(self, data):
     self._oprot.writeMessageBegin('hi', TMessageType.CALL, self._seqid)

@@ -5,7 +5,7 @@ import gevent
 from gevent.event import AsyncResult
 from gevent.queue import Queue
 
-from types import (
+from ttypes import (
   DispatcherState,
   MessageType)
 from message import (
@@ -277,7 +277,7 @@ class MuxMessageDispatcher(object):
     Returns:
       An AsyncResult representing the server response, or None if oneway=True.
     """
-    if not self.isRunning:
+    if not (self.isRunning or self.state == DispatcherState.STARTING):
       raise Exception("Dispatcher is not in a state to accept messages.")
 
     if oneway:
@@ -356,12 +356,16 @@ class MuxMessageDispatcher(object):
       self._socket.open()
       gevent.spawn(self._SendLoop)
       gevent.spawn(self._RecvLoop)
+      try:
+        ar = self._SendPingMessage()
+        # Block the open() call until we get a ping response back.
+        ar.get()
+      except Exception as e:
+        self._Shutdown(DispatcherState.FAULTED, e)
+        raise
+
       self._state = DispatcherState.RUNNING
       gevent.spawn(self._PingLoop)
-
-      ar = self._SendPingMessage()
-      # Block the open() call until we get a ping response back.
-      ar.get()
       self._open_result.set('open')
 
     except Exception as e:
