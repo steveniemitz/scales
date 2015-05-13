@@ -10,6 +10,9 @@ class Marshallable(object):
     raise NotImplementedError()
 
 
+class Tmessage(object): pass
+class Rmessage(object): pass
+
 class Deadline(Marshallable):
   def __init__(self, timeout):
     """
@@ -36,8 +39,10 @@ def pipe_io(src, dst):
     else:
       break
 
+
 class Message(Marshallable):
   def __init__(self, msg_type):
+    super(Message, self).__init__()
     self._tag = None
     self._type = msg_type
 
@@ -53,6 +58,14 @@ class Message(Marshallable):
   @tag.setter
   def tag(self, value):
     self._tag = value
+
+  @property
+  def type(self):
+    return self._type
+
+  @property
+  def isResponseMsg(self):
+    return self._type < 0
 
   def _EncodeTag(self, tag=None):
     if tag is None:
@@ -75,9 +88,9 @@ class Message(Marshallable):
     raise NotImplementedError()
 
 
-class DispatchMessage(Message):
+class TdispatchMessage(Message):
   def __init__(self, data, ctx=None, dst=None, dtab=None):
-    super(DispatchMessage, self).__init__(MessageType.Tdispatch)
+    super(TdispatchMessage, self).__init__(MessageType.Tdispatch)
     self._tag = None
     self._ctx = ctx or {}
     self._dst = dst
@@ -112,17 +125,17 @@ class DispatchMessage(Message):
     pipe_io(self._data, buf)
 
 
-class PingMessage(Message):
+class TpingMessage(Message):
   def __init__(self):
-    super(PingMessage, self).__init__(MessageType.Tping)
+    super(TpingMessage, self).__init__(MessageType.Tping)
 
   def Marshal(self, buf):
     self._WriteHeader(buf, 0)
 
 
-class DiscardedMessage(Message):
+class TdiscardedMessage(Message):
   def __init__(self, which, reason):
-    super(DiscardedMessage, self).__init__(MessageType.BAD_Tdiscarded)
+    super(TdiscardedMessage, self).__init__(MessageType.BAD_Tdiscarded)
     self._reason = reason
     self._which = which
 
@@ -133,28 +146,38 @@ class DiscardedMessage(Message):
 
 
 class RMessage(object):
-  def __init__(self, msg_type, err=None):
-    self._type = msg_type
+  def __init__(self, msg_type, payload=None, err=None):
     self._err = err
+    self._payload = payload
 
   @property
   def err(self):
     return self._err
 
   @property
-  def type(self):
-    return self._type
+  def payload(self):
+    return self._payload
 
 
-class RdispatchMessage(RMessage):
+class RpingMessage(Message):
+  def __init__(self):
+    super(RpingMessage, self).__init__(MessageType.Rping)
+
+  @classmethod
+  def Unmarshal(cls, buf):
+    return RpingMessage()
+
+
+class RdispatchMessage(Message):
   class Rstatus(Enum):
     OK = 0
     ERROR = 1
     NACK = 2
 
-  def __init__(self, buf=None, err=None):
-    super(RdispatchMessage, self).__init__(MessageType.Rdispatch, err)
-    self.buf = buf
+  def __init__(self, response=None, err=None):
+    super(RdispatchMessage, self).__init__(MessageType.Rdispatch)
+    self._response = response
+    self._err = err
 
   @staticmethod
   def _ReadContext(buf):
@@ -175,12 +198,47 @@ class RdispatchMessage(RMessage):
     else:
       return cls(err=buf.read())
 
+  @property
+  def response(self):
+    return self._response
 
-class RerrorMessage(RMessage):
+  @property
+  def error(self):
+    return self._err
+
+
+class RerrorMessage(Message):
   def __init__(self, err):
-    super(RerrorMessage, self).__init__(MessageType.Rerr, err)
+    super(RerrorMessage, self).__init__(MessageType.Rerr)
+    self._err = err
 
   @classmethod
   def Unmarshal(cls, buf):
     why = buf.read()
     return cls(why)
+
+  @property
+  def error(self):
+    return self._err
+
+class MessageSerializer(object):
+  MESSAGE_MAP = {
+    MessageType.Rdispatch: RdispatchMessage,
+    MessageType.Rping: RpingMessage,
+    MessageType.Rerr: RerrorMessage,
+    MessageType.BAD_Rerr: RerrorMessage,
+
+    MessageType.Tping: TpingMessage
+  }
+
+  @staticmethod
+  def Marshal():
+    pass
+
+  @staticmethod
+  def Unmarshal(tag, msg_type, data):
+    msg_type_cls = MessageSerializer.MESSAGE_MAP[msg_type]
+    msg = msg_type_cls.Unmarshal(data)
+    msg.tag = tag
+    return msg
+

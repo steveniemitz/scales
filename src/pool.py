@@ -8,6 +8,7 @@ from contextlib import contextmanager
 import itertools
 import logging
 import random
+import traceback
 
 import gevent
 
@@ -198,6 +199,7 @@ class SingletonPool(object):
   def Get(self):
     num_retries = 0
     max_retries = max(len(self._healthy_servers) / 2, 1)
+    last_exception = None
     while True:
       if any(self._socket_queue):
         # There's an available socket in the pool, use that.
@@ -239,6 +241,7 @@ class SingletonPool(object):
         LOG.error("All nodes failed for pool %s." % self._pool_name)
         raise
       except Exception as ex:
+        last_exception = traceback.format_exc()
         if not self._connection_provider.IsConnectionFault(ex):
           raise
         else:

@@ -30,8 +30,8 @@ class TScalesTransport(TFramedTransport):
     if self._read_future is None:
       raise Exception("Unexpected read!")
     else:
-      msg = self._read_future.get()
-      setattr(self, '_TFramedTransport__rbuf', msg.buf)
+      data = self._read_future.get()
+      setattr(self, '_TFramedTransport__rbuf', data)
       self._read_future = None
 
   def open(self):
