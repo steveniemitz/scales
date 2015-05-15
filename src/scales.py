@@ -8,7 +8,7 @@ from thrift.protocol import TBinaryProtocol
 from thrift.transport import TTransport
 from thrift.transport.TTransport import TFramedTransport
 
-from src.dispatch import MuxMessageDispatcher
+from src.dispatch import MessageDispatcher
 from src.pool import (
   RoundRobinPoolMemberSelector,
   SingletonPool,

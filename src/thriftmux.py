@@ -1,13 +1,22 @@
 __author__ = 'steveniemitz'
 from thrift.transport import TTransport
 
-from src.dispatch import MuxMessageDispatcher
+from src.dispatch import MessageDispatcher
 from src.scales import Scales
 from src.thealthysocket import THealthySocket
-
+from src import sink
 
 _MUXERS = {}
 class MuxDispatcherProvider(object):
+  class ThriftMuxSocketTransportSinkProvider(object):
+    def __init__(self, sock):
+      self._sock = sock
+
+    def GetTransportSink(self):
+      sock = self._sock
+      self._sock = None
+      return sink.ThriftMuxSocketTransportSink(sock)
+
   @staticmethod
   def AreDispatchersSharable():
     return True
@@ -18,7 +27,8 @@ class MuxDispatcherProvider(object):
       disp, cbs = _MUXERS[key]
     else:
       sock = THealthySocket(server.host, server.port, None, None, pool_name)
-      disp = MuxMessageDispatcher(sock, timeout)
+      transport_sink_provider = self.ThriftMuxSocketTransportSinkProvider(sock)
+      disp = MessageDispatcher(sock, timeout, transport_sink_provider)
       cbs = set()
       _MUXERS[key] = (disp, cbs)
 

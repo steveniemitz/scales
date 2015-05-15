@@ -3,7 +3,6 @@ from cStringIO import StringIO
 
 import gevent
 from gevent.event import AsyncResult
-from gevent.queue import Queue
 
 from ttypes import (
   DispatcherState,
@@ -19,83 +18,17 @@ from message import (
   RerrorMessage,
   TpingMessage)
 
-class ServerException(Exception):  pass
-class DispatcherException(Exception): pass
-class TimeoutException(Exception): pass
-
-class TagPool(object):
-  """A class which manages a pool of tags
-  """
-  def __init__(self, max_tag):
-    self._set = set()
-    self._next = 1
-    self._max_tag = max_tag
-
-  def get(self):
-    """Get a tag from the pool.
-
-    Returns:
-      A tag
-
-    Raises:
-      Exception if the next tag will be > max_tag
-    """
-    if not any(self._set):
-      if self._next == self._max_tag - 1:
-        raise Exception("No tags left in pool.")
-
-      self._next += 1
-      return self._next
-    else:
-      return self._set.pop()
-
-  def release(self, tag):
-    """Return a tag to the pool.
-
-    Args:
-      tag - The previously leased tag.
-    """
-    self._set.add(tag)
+import sink
 
 
-class MuxMessageDispatcher(object):
+class MessageDispatcher(object):
   """Handles dispatching incoming and outgoing messages to a socket.
   """
-  class ResponseDispatcher(object):
-    def __init__(self):
-      self._dispatchers = {
-        MessageType.Rdispatch: self._Rdispatch,
-        MessageType.Rping: self._Rping,
-
-        MessageType.Tping: self._Tping,
-      }
-
-    def Dispatch(self, msg, ar):
-      reply_dispatcher = self._dispatchers.get(msg.type)
-      if reply_dispatcher:
-        reply_dispatcher(msg, ar)
-      elif ar:
-        ar.set_exception(DispatcherException(
-          'No dispatch handler was found for message type %s.' % msg_type
-        ))
-
-    def _CompleteCall(self, ar, payload=None, error=None):
-      if ar:
-        if error:
-          ar.set_exception(ServerException(error))
-        else:
-          ar.set(payload)
-
-    def _Tping(self, msg, ar):
-      pass
-
-    def _Rping(self, msg, ar):
-      self._CompleteCall(ar)
-
-    def _Rdispatch(self, msg, ar):
-      self._CompleteCall(ar, msg.response, msg.error)
-
-  def __init__(self, socket, dispatch_timeout=10):
+  def __init__(
+        self,
+        transport_provider,
+        client_stack_builder,
+        dispatch_timeout=10):
     """
     Args:
       socket - An instance of a TSocket or greater.  THealthySocket is prefered.
@@ -103,17 +36,15 @@ class MuxMessageDispatcher(object):
     """
     self._state = DispatcherState.UNINITIALIZED
     self._open_result = None
-    self._socket = socket
-    self._tag_pool = TagPool((2 ** 24) - 1)
-    self._send_queue = Queue()
-    self._tag_map = {}
+    self._transport_provider = transport_provider
+    self._client_stack_builder = client_stack_builder
     self._exception = None
     self._ping_timeout = 5
     self._ping_ar = None
     self._serializer = MessageSerializer()
-    self._dispatcher = self.ResponseDispatcher()
     self._shutdown_ar = AsyncResult()
     self._dispatch_timeout = dispatch_timeout
+    self._transport_sink = None
 
   @property
   def state(self):
@@ -134,36 +65,6 @@ class MuxMessageDispatcher(object):
     """
     return self._shutdown_ar
 
-  def _SendLoop(self):
-    """Dispatch messages from the send queue to the remote server.
-
-    Note: Messages in the queue have already been serialized into wire format.
-    """
-    while True:
-      try:
-        payload = self._send_queue.get()
-        self._socket.write(payload)
-      except Exception as e:
-        self._exception = e
-        self._Shutdown(DispatcherState.FAULTED)
-        break
-
-  def _RecvLoop(self):
-    """Dispatch messages from the remote server to their recipient.
-
-    Note: Deserialization and dispatch occurs on a seperate greenlet, this only
-    reads the message off the wire.
-    """
-    while True:
-      try:
-        sz, = unpack('!i', self._socket.readAll(4))
-        buf = StringIO(self._socket.readAll(sz))
-        gevent.spawn(self._RecvMessage, buf)
-      except Exception as e:
-        self._exception = e
-        self._Shutdown(DispatcherState.FAULTED)
-        break
-
   def _PingLoop(self):
     """Periodically pings the remote server.
     """
@@ -176,69 +77,16 @@ class MuxMessageDispatcher(object):
       else:
         break
 
-  @staticmethod
-  def _ReadHeader(msg):
-    """Read a mux header off a message.
+  def _CreateSinkStack(self):
+    sinks = [
+      sink.ThriftMuxDispatchSink(),
+      sink.ThrfitMuxMessageSerializerSink(),
+      self._transport_sink
+    ]
+    for s in range(0, len(sinks) - 1):
+      sinks[s].next_sink = sinks[s + 1]
 
-    Args:
-      msg - a byte buffer of raw data.
-
-    Returns:
-      A tuple of (message_type, tag)
-    """
-    header, = unpack('!i', msg.read(4))
-    msg_type = (256 - (header >> 24 & 0xff)) * -1
-    tag = ((header << 8) & 0xFFFFFFFF) >> 8
-    return msg_type, tag
-
-  def _RecvMessage(self, msg_data):
-    """Read and dispatch a full message from raw data.  This method never throws
-    and returns nothing, all dispatch is expected to occur within.
-
-    Args:
-      msg - The raw message bytes.
-    """
-    msg_type, tag = self._ReadHeader(msg_data)
-    # Tag 0 responses are reserved and don't have a response handler result.
-    # Only try to free tags for Rmessages.
-    if msg_type < 0 and tag != 0:
-      ar = self._ReleaseTag(tag)
-
-    msg = None
-    processing_excr = None
-
-    # Deserialize
-    try:
-      msg = self._serializer.Unmarshal(tag, msg_type, msg_data)
-    except Exception as e:
-      processing_excr = e
-
-
-    if ar and processing_excr:
-      ar.set_exception(DispatcherException(
-          'An exception occured while processing a message.',
-          processing_excr))
-      return
-
-    reply = self._dispatcher.Dispatch(msg, ar)
-
-
-  def _ReleaseTag(self, tag):
-    """Return a tag to the tag pool.
-
-    Note: Tags are only returned when the server has ACK'd them (or NACK'd) with
-    and Rdispatch message (or similar).  Client initiated timeouts do NOT return
-    tags to the pool.
-
-    Args:
-      tag - The tag to return.
-
-    Returns:
-      The AsyncResult associated with the tag's response.
-    """
-    ar = self._tag_map.pop(tag, None)
-    self._tag_pool.release(tag)
-    return ar
+    return sinks[0]
 
   def SendDispatchMessage(self, thrift_payload, timeout=None):
     """Creates and posts a Tdispatch message to the send queue.
@@ -291,47 +139,13 @@ class MuxMessageDispatcher(object):
     if not (self.isRunning or self.state == DispatcherState.STARTING):
       raise Exception("Dispatcher is not in a state to accept messages.")
 
-    if oneway:
-      msg.tag = 0
-    else:
-      msg.tag = self._tag_pool.get()
-
-    fpb = StringIO()
-    msg.Marshal(fpb)
-    finagle_payload = fpb.getvalue()
-
+    sink_stack = self._CreateSinkStack()
+    ar_sink = None
     if not oneway:
-      ar = AsyncResult()
-      self._tag_map[msg.tag] = ar
-      self._send_queue.put(finagle_payload)
-      if timeout:
-        self._InitTimeout(ar, timeout, msg.tag)
-    else:
-      ar = None
+      ar_sink = sink.GeventReplySink()
+    sink_stack.AsyncProcessMessage(msg, None, ar_sink)
 
-    return ar
-
-  def _TimeoutHelper(self, ar, timeout, tag):
-    """Waits for ar to be signaled or [timeout] seconds to elapse.  If the
-    timeout elapses, a Tdiscarded message will be queued to the server indicating
-    the client is no longer expecting a reply.
-    """
-    ar.wait(timeout)
-    if not ar.ready():
-      ar.set_exception(TimeoutException('The thrift call did not complete within the specified timeout and has been aborted.'))
-      msg = TdiscardedMessage(tag, 'timeout')
-      self._SendMessage(msg, oneway=True)
-
-  def _InitTimeout(self, ar, timeout, tag):
-    """Initialize the timeout handler for this request.
-
-    Args:
-      ar - The AsyncResult for the pending response of this request.
-      timeout - An optional timeout.  If None, no timeout handler is initialized.
-      tag - The tag of the request.
-    """
-    if timeout:
-      gevent.spawn(self._TimeoutHelper, ar, timeout, tag)
+    return ar_sink._ar
 
   def _Shutdown(self, termainal_state, excr=None):
     """Shutdown the dispatcher, no more requests will be accepted after.
@@ -364,15 +178,13 @@ class MuxMessageDispatcher(object):
     self._open_result = AsyncResult()
     try:
       self._state = DispatcherState.STARTING
-      self._socket.open()
-      gevent.spawn(self._SendLoop)
-      gevent.spawn(self._RecvLoop)
+      self._transport_sink = self._transport_provider.GetTransportSink()
       try:
         ar = self._SendPingMessage()
         # Block the open() call until we get a ping response back.
         ar.get()
       except Exception as e:
-        self._Shutdown(DispatcherState.FAULTED, e)
+        #self._Shutdown(DispatcherState.FAULTED, e)
         raise
 
       self._state = DispatcherState.RUNNING
@@ -396,7 +208,4 @@ class MuxMessageDispatcher(object):
     """
     if not self.isRunning:
       return False
-    if hasattr(self._socket, 'testConnection'):
-      return self._socket.testConnection()
-    else:
-      return True
+    return True

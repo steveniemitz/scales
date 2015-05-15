@@ -45,6 +45,7 @@ class Message(Marshallable):
     super(Message, self).__init__()
     self._tag = None
     self._type = msg_type
+    self._timeout = None
 
   @staticmethod
   def _EnsureTag(tag):
@@ -64,21 +65,16 @@ class Message(Marshallable):
     return self._type
 
   @property
-  def isResponseMsg(self):
+  def timeout(self):
+    return self._timeout
+
+  @timeout.setter
+  def timeout(self, value):
+    self._timeout = value
+
+  @property
+  def isResponse(self):
     return self._type < 0
-
-  def _EncodeTag(self, tag=None):
-    if tag is None:
-      tag = self.tag
-    self._EnsureTag(tag)
-    return [tag >> 16 & 0xff, tag >> 8 & 0xff, tag & 0xff] # Tag
-
-  def _WriteHeader(self, buf, data_len):
-    total_len = 1 + 3 + data_len
-    buf.write(pack('!ibBBB',
-                   total_len,
-                   self._type,
-                   *self._EncodeTag()))
 
   def Marshal(self, buf):
     raise NotImplementedError()
@@ -117,8 +113,7 @@ class TdispatchMessage(Message):
       v.Marshal(buf)
 
   def Marshal(self, buf):
-    data_length = self._GetContextSize() + 2 + 2 + self._data.tell()
-    self._WriteHeader(buf, data_length)
+    #data_length = self._GetContextSize() + 2 + 2 + self._data.tell()
     self._WriteContext(buf)
     buf.write(pack('!hh', 0, 0)) # len(dst), len(dtab), both unsupported
     self._data.seek(0)
@@ -130,7 +125,7 @@ class TpingMessage(Message):
     super(TpingMessage, self).__init__(MessageType.Tping)
 
   def Marshal(self, buf):
-    self._WriteHeader(buf, 0)
+    pass
 
 
 class TdiscardedMessage(Message):
@@ -140,7 +135,7 @@ class TdiscardedMessage(Message):
     self._which = which
 
   def Marshal(self, buf):
-    self._WriteHeader(buf, 3 + len(self._reason))
+    #self._WriteHeader(buf, 3 + len(self._reason))
     buf.write(pack('!BBB', *self._EncodeTag(self._which)))
     buf.write(self._reason)
 
@@ -242,3 +237,13 @@ class MessageSerializer(object):
     msg.tag = tag
     return msg
 
+
+class SystemMessage(object): pass
+class TimeoutMessage(SystemMessage): pass
+class ErrorMessage(SystemMessage):
+  def __init__(self, excr):
+    self._exception = excr
+
+class ShutdownMessage(SystemMessage):
+  def __init__(self, excr, reason):
+    pass
