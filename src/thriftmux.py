@@ -15,6 +15,7 @@ class MuxDispatcherProvider(object):
     def GetTransportSink(self):
       sock = self._sock
       self._sock = None
+      sock.open()
       return sink.ThriftMuxSocketTransportSink(sock)
 
   @staticmethod
@@ -28,7 +29,7 @@ class MuxDispatcherProvider(object):
     else:
       sock = THealthySocket(server.host, server.port, None, None, pool_name)
       transport_sink_provider = self.ThriftMuxSocketTransportSinkProvider(sock)
-      disp = MessageDispatcher(sock, timeout, transport_sink_provider)
+      disp = MessageDispatcher(transport_sink_provider, None, timeout)
       cbs = set()
       _MUXERS[key] = (disp, cbs)
 
@@ -59,4 +60,5 @@ class ThriftMux(object):
       .newBuilder(Client) \
       .setDispatcherFactory(MuxDispatcherProvider()) \
       .setUri(uri) \
+      .setTimeout(.5) \
       .build()

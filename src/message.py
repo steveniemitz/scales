@@ -13,6 +13,21 @@ class Marshallable(object):
 class Tmessage(object): pass
 class Rmessage(object): pass
 
+class Timeout(object):
+  KEY = "__Timeout"
+
+class Tag(object):
+  KEY = "__Tag"
+
+  def __init__(self, tag):
+    self._tag = tag
+
+  def Encode(self):
+    return [self._tag >> 16 & 0xff,
+            self._tag >>  8 & 0xff,
+            self._tag       & 0xff]
+
+
 class Deadline(Marshallable):
   def __init__(self, timeout):
     """
@@ -43,34 +58,16 @@ def pipe_io(src, dst):
 class Message(Marshallable):
   def __init__(self, msg_type):
     super(Message, self).__init__()
-    self._tag = None
+    self._props = {}
     self._type = msg_type
-    self._timeout = None
-
-  @staticmethod
-  def _EnsureTag(tag):
-    if tag is None:
-      raise Exception("Tag was unset on message during serialization.")
 
   @property
-  def tag(self):
-    return self._tag
-
-  @tag.setter
-  def tag(self, value):
-    self._tag = value
+  def properties(self):
+    return self._props
 
   @property
   def type(self):
     return self._type
-
-  @property
-  def timeout(self):
-    return self._timeout
-
-  @timeout.setter
-  def timeout(self, value):
-    self._timeout = value
 
   @property
   def isResponse(self):
@@ -87,7 +84,6 @@ class Message(Marshallable):
 class TdispatchMessage(Message):
   def __init__(self, data, ctx=None, dst=None, dtab=None):
     super(TdispatchMessage, self).__init__(MessageType.Tdispatch)
-    self._tag = None
     self._ctx = ctx or {}
     self._dst = dst
     self._dtab = dtab
@@ -113,7 +109,6 @@ class TdispatchMessage(Message):
       v.Marshal(buf)
 
   def Marshal(self, buf):
-    #data_length = self._GetContextSize() + 2 + 2 + self._data.tell()
     self._WriteContext(buf)
     buf.write(pack('!hh', 0, 0)) # len(dst), len(dtab), both unsupported
     self._data.seek(0)
@@ -135,23 +130,8 @@ class TdiscardedMessage(Message):
     self._which = which
 
   def Marshal(self, buf):
-    #self._WriteHeader(buf, 3 + len(self._reason))
-    buf.write(pack('!BBB', *self._EncodeTag(self._which)))
+    buf.write(pack('!BBB', *Tag(self._which).Encode()))
     buf.write(self._reason)
-
-
-class RMessage(object):
-  def __init__(self, msg_type, payload=None, err=None):
-    self._err = err
-    self._payload = payload
-
-  @property
-  def err(self):
-    return self._err
-
-  @property
-  def payload(self):
-    return self._payload
 
 
 class RpingMessage(Message):

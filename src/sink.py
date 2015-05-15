@@ -5,20 +5,22 @@ from struct import (pack, unpack)
 from cStringIO import StringIO
 
 import gevent
-from gevent.event import AsyncResult
+from gevent.event import AsyncResult, Event
 from gevent.queue import Queue
 
 from src.message import (
     RdispatchMessage,
     RerrorMessage,
     TdiscardedMessage,
-    ShutdownMessage,
-    MessageSerializer)
-from src.ttypes import MessageType
+    MessageSerializer,
+    TimeoutMessage,
+    Timeout,
+    Tag)
 
 class DispatcherException(Exception): pass
 class ServerException(Exception):  pass
 class TimeoutException(Exception): pass
+
 
 class TagPool(object):
   """A class which manages a pool of tags
@@ -55,8 +57,9 @@ class TagPool(object):
     self._set.add(tag)
 
 
-class ClientSink(object):
+class MessageSink(object):
   def __init__(self):
+    super(MessageSink, self).__init__()
     self._next = None
 
   @property
@@ -67,24 +70,37 @@ class ClientSink(object):
   def next_sink(self, value):
     self._next = value
 
-  def AsyncProcessMessage(self, msg, stream, reply_sink):
-    self.next_sink.AsyncProcessMessage(msg, stream, reply_sink)
 
-
-class ReplySink(object):
+class SyncMessageSink(MessageSink):
   def __init__(self):
-    self._reply_sink = None
+    super(SyncMessageSink, self).__init__()
 
-  @property
-  def reply_sink(self):
-    return self._reply_sink
+  def SyncProcessMessage(self, msg):
+    raise NotImplementedError()
 
-  @reply_sink.setter
-  def reply_sink(self, value):
-    self._reply_sink = value
 
-  def ProcessReply(self, msg, stream):
-    self._reply_sink.ProcessReply(msg, stream)
+class AsyncMessageSink(MessageSink):
+  def __init__(self):
+    super(AsyncMessageSink, self).__init__()
+
+  def AsyncProcessMessage(self, msg, reply_sink):
+    raise NotImplementedError()
+
+
+class ClientChannelSink(object):
+  def __init__(self):
+    super(ClientChannelSink, self).__init__()
+
+  def AsyncProcessRequest(self, sink_stack, msg, stream):
+    raise NotImplementedError()
+
+  def AsyncProcessResponse(self, sink_stack, stream):
+    raise NotImplementedError()
+
+
+class ClientFormatterSink(AsyncMessageSink, ClientChannelSink):
+  def __init__(self):
+    super(ClientFormatterSink, self).__init__()
 
 
 class SinkStack(object):
@@ -95,18 +111,78 @@ class SinkStack(object):
     self._stack.append(sink)
 
   def Pop(self):
-    self._stack.pop()
+    return self._stack.pop()
 
-class ThriftMuxSocketTransportSink(ClientSink):
+
+class ClientChannelSinkStack(SinkStack):
+  def __init__(self, reply_sink):
+    super(ClientChannelSinkStack, self).__init__()
+    self._reply_sink = reply_sink
+
+  def AsyncProcessResponse(self, stream):
+    if self._reply_sink:
+      sink = self.Pop()
+      sink.AsyncProcessResponse(self, stream)
+
+  def DispatchReplyMessage(self, msg):
+    if self._reply_sink:
+      self._reply_sink.SyncProcessMessage(msg)
+
+
+class MessageProcessing(object):
+  def Cancel(self):
+    pass
+
+
+class ThriftMuxSocketTransportSink(ClientFormatterSink):
   def __init__(self, socket):
     super(ThriftMuxSocketTransportSink, self).__init__()
+    self._tag_pool = TagPool((2 ** 24) - 1)
+    self._tag_map = {}
     self._socket = socket
     self._send_queue = Queue()
     gevent.spawn(self._SendLoop)
     gevent.spawn(self._RecvLoop)
-    self._tag_pool = TagPool((2 ** 24) - 1)
-    self._tag_map = {}
     self._shutdown_ar = AsyncResult()
+
+  def _SendLoop(self):
+    """Dispatch messages from the send queue to the remote server.
+
+    Note: Messages in the queue have already been serialized into wire format.
+    """
+    while True:
+      try:
+        payload = self._send_queue.get()
+        self._socket.write(payload)
+      except Exception as e:
+        self._shutdown_ar.set_exception(e)
+        break
+
+  def _RecvLoop(self):
+    """Dispatch messages from the remote server to their recipient.
+
+    Note: Deserialization and dispatch occurs on a seperate greenlet, this only
+    reads the message off the wire.
+    """
+    while True:
+      try:
+        sz, = unpack('!i', self._socket.readAll(4))
+        buf = StringIO(self._socket.readAll(sz))
+        gevent.spawn(self._ProcessReply, buf)
+      except Exception as e:
+        self._shutdown_ar.set_exception(e)
+        break
+
+  def _ProcessReply(self, stream):
+    try:
+      _, tag = ThrfitMuxMessageSerializerSink.ReadHeader(stream)
+      stream.seek(0)
+      if tag != 0:
+        reply_stack = self._tag_map.get(tag)
+        if reply_stack:
+          reply_stack.AsyncProcessResponse(stream)
+    except Exception:
+      pass
 
   def _ReleaseTag(self, tag):
     """Return a tag to the tag pool.
@@ -136,59 +212,24 @@ class ThriftMuxSocketTransportSink(ClientSink):
       msg_type,
       *self._EncodeTag(tag))
 
-  def _SendLoop(self):
-    """Dispatch messages from the send queue to the remote server.
-
-    Note: Messages in the queue have already been serialized into wire format.
-    """
-    while True:
-      try:
-        header, payload = self._send_queue.get()
-        self._socket.write(header + payload.getvalue())
-      except Exception as e:
-        self._shutdown_ar.set_exception(e)
-        break
-
-  def _RecvLoop(self):
-    """Dispatch messages from the remote server to their recipient.
-
-    Note: Deserialization and dispatch occurs on a seperate greenlet, this only
-    reads the message off the wire.
-    """
-    while True:
-      try:
-        sz, = unpack('!i', self._socket.readAll(4))
-        buf = StringIO(self._socket.readAll(sz))
-        gevent.spawn(self._ProcessReply, None, buf)
-      except Exception as e:
-        self._shutdown_ar.set_exception(e)
-        break
-
-  def AsyncProcessMessage(self, msg, stream, reply_sink):
-    if reply_sink:
+  def AsyncProcessRequest(self, sink_stack, msg, stream):
+    if sink_stack:
       tag = self._tag_pool.get()
-      self._tag_map[tag] = reply_sink
+      msg.properties[Tag.KEY] = tag
+      self._tag_map[tag] = sink_stack
     else:
       tag = 0
 
     data_len = stream.tell()
     header = self._BuildHeader(tag, msg.type, data_len)
-    self._send_queue.put((header, stream))
-    return None
+    payload = header + stream.getvalue()
+    self._send_queue.put(payload)
 
-  def _ProcessReply(self, msg, stream):
-    try:
-      _, tag = ThrfitMuxMessageSerializerSink.ReadHeader(stream)
-      stream.seek(0)
-      if tag != 0:
-        reply_sink = self._tag_map.get(tag)
-        if reply_sink:
-          reply_sink.ProcessReply(msg, stream)
-    except Exception:
-      pass
+  def AsyncProcessResponse(self, sink_stack, stream):
+    raise Exception("Not supported.")
 
 
-class ThrfitMuxMessageSerializerSink(ClientSink, ReplySink):
+class ThrfitMuxMessageSerializerSink(ClientFormatterSink):
   """Serialize a ThriftMux Message to a stream
   """
   @staticmethod
@@ -206,7 +247,22 @@ class ThrfitMuxMessageSerializerSink(ClientSink, ReplySink):
     tag = ((header << 8) & 0xFFFFFFFF) >> 8
     return msg_type, tag
 
-  def ProcessReply(self, msg, stream):
+  def __init__(self):
+    super(ThrfitMuxMessageSerializerSink, self).__init__()
+    self._serializer = MessageSerializer()
+    self._reply_sink = None
+
+  def AsyncProcessMessage(self, msg, reply_sink):
+    fpb = StringIO()
+    msg.Marshal(fpb)
+    sink_stack = ClientChannelSinkStack(reply_sink)
+    sink_stack.Push(self)
+    self.next_sink.AsyncProcessRequest(sink_stack, msg, fpb)
+
+  def AsyncProcessRequest(self, sink_stack, msg, stream):
+    raise Exception("Not supported")
+
+  def AsyncProcessResponse(self, sink_stack, stream):
     try:
       msg_type, tag = ThrfitMuxMessageSerializerSink.ReadHeader(stream)
       msg = self._serializer.Unmarshal(tag, msg_type, stream)
@@ -214,35 +270,42 @@ class ThrfitMuxMessageSerializerSink(ClientSink, ReplySink):
       why = traceback.format_exc()
       msg = RerrorMessage(why)
 
-    return self.reply_sink.ProcessReply(msg, stream)
+    sink_stack.DispatchReplyMessage(msg)
 
-  def __init__(self):
-    super(ThrfitMuxMessageSerializerSink, self).__init__()
-    self._serializer = MessageSerializer()
-    self._reply_sink = None
 
-  def AsyncProcessMessage(self, msg, stream, reply_sink):
-    fpb = StringIO()
-    msg.Marshal(fpb)
-    self.reply_sink = reply_sink
-    return self.next_sink.AsyncProcessMessage(
-        msg,
-        fpb,
-        self)
+class TimeoutReplySink(SyncMessageSink):
+  def __init__(self, client_sink, msg, next_sink, timeout):
+    super(TimeoutReplySink, self).__init__()
+    self.next_sink = next_sink
+    self._call_done = Event()
+    self._msg = msg
+    self._client_sink = client_sink
+    gevent.spawn(self._TimeoutHelper, timeout)
 
-class TimeoutSink(ClientSink):
-  def _TimeoutHelper(self, ar, timeout, tag):
+  def SyncProcessMessage(self, msg):
+    self._call_done.set()
+    if self.next_sink:
+      self.next_sink.SyncProcessMessage(msg)
+
+  def _TimeoutHelper(self, timeout):
     """Waits for ar to be signaled or [timeout] seconds to elapse.  If the
     timeout elapses, a Tdiscarded message will be queued to the server indicating
     the client is no longer expecting a reply.
     """
-    ar.wait(timeout)
-    if not ar.ready():
-      ar.set_exception(TimeoutException('The thrift call did not complete within the specified timeout and has been aborted.'))
-      msg = TdiscardedMessage(tag, 'timeout')
+    self._call_done.wait(timeout)
+    if not self._call_done.is_set() and self.next_sink:
+      error_msg = TimeoutMessage()
+      reply_sink, self.next_sink = self.next_sink, None
+      reply_sink.SyncProcessMessage(error_msg)
+
+      tag = self._msg.properties.get(Tag.KEY)
+      if tag:
+        msg = TdiscardedMessage(tag, 'Client Timeout')
+        self._client_sink.AsyncProcessMessage(msg, None)
 
 
-  def _InitTimeout(self, timeout, tag, reply_sink):
+class TimeoutSink(AsyncMessageSink):
+  def AsyncProcessMessage(self, msg, reply_sink):
     """Initialize the timeout handler for this request.
 
     Args:
@@ -250,66 +313,27 @@ class TimeoutSink(ClientSink):
       timeout - An optional timeout.  If None, no timeout handler is initialized.
       tag - The tag of the request.
     """
+    timeout = msg.properties.get(Timeout.KEY)
     if timeout:
-      gevent.spawn(self._TimeoutHelper, timeout, tag)
-
-  def AsyncProcessMessage(self, msg, stream, reply_sink):
-    self._InitTimeout(msg.timeout, msg.tag, reply_sink)
+      reply_sink = TimeoutReplySink(self, msg, reply_sink, timeout)
+    return self.next_sink.AsyncProcessMessage(msg, reply_sink)
 
 
-class ThriftMuxDispatchSink(ClientSink, ReplySink):
-  def _CompleteCall(self, msg):
-    if self.reply_sink:
-      self.reply_sink.ProcessReply(msg, None)
-
-  def _Tping(self, msg):
-    pass
-
-  def _Rping(self, msg):
-    self._CompleteCall(msg)
-
-  def _Rdispatch(self, msg):
-    self._CompleteCall(msg)
-
+class GeventMessageTerminatorSink(SyncMessageSink):
   def __init__(self):
-    super(ThriftMuxDispatchSink, self).__init__()
-    self._dispatchers = {
-      MessageType.Rdispatch: self._Rdispatch,
-      MessageType.Rping: self._Rping,
-
-      MessageType.Tping: self._Tping,
-    }
-
-  def ProcessReply(self, msg, stream):
-    reply_dispatcher = self._dispatchers.get(msg.type)
-    if reply_dispatcher:
-      reply_dispatcher(msg)
-    else:
-      error_msg = RerrorMessage(
-        'No dispatch handler was found for message type %s.' % msg.type)
-      self.reply_sink.ProcessReply(error_msg)
-
-  def AsyncProcessMessage(self, msg, stream, reply_sink):
-    if reply_sink:
-      dispatch_reply_sink = self
-    else:
-      dispatch_reply_sink = None
-
-    self.reply_sink = reply_sink
-    self.next_sink.AsyncProcessMessage(msg, stream, dispatch_reply_sink)
-
-
-class GeventReplySink(ReplySink):
-  def __init__(self):
-    super(GeventReplySink, self).__init__()
+    super(GeventMessageTerminatorSink, self).__init__()
     self._ar = AsyncResult()
 
-  def ProcessReply(self, msg, stream):
+  def SyncProcessMessage(self, msg):
     if isinstance(msg, RdispatchMessage):
       if msg.error:
         self._ar.set_exception(ServerException(msg.error))
       else:
         self._ar.set(msg.response)
+    elif isinstance(msg, TimeoutMessage):
+      self._ar.set_exception(TimeoutException(
+          'The call did not complete within the specified timeout '
+          'and has been aborted.'))
     else:
       self._ar.set(msg)
 

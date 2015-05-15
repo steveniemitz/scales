@@ -13,9 +13,9 @@ from message import (
   TdispatchMessage,
   Message,
   MessageSerializer,
-  RMessage,
   RdispatchMessage,
   RerrorMessage,
+  Timeout,
   TpingMessage)
 
 import sink
@@ -79,7 +79,7 @@ class MessageDispatcher(object):
 
   def _CreateSinkStack(self):
     sinks = [
-      sink.ThriftMuxDispatchSink(),
+      sink.TimeoutSink(),
       sink.ThrfitMuxMessageSerializerSink(),
       self._transport_sink
     ]
@@ -108,14 +108,16 @@ class MessageDispatcher(object):
       ctx['com.twitter.finagle.Deadline'] = Deadline(timeout)
 
     disp_msg = TdispatchMessage(thrift_payload, ctx)
-    ar = self._SendMessage(disp_msg, timeout)
+    disp_msg.properties[Timeout.KEY] = timeout
+    ar = self._SendMessage(disp_msg)
     return ar
 
   def _SendPingMessage(self):
     """Constucts and sends a Tping message.
     """
     ping_msg = TpingMessage()
-    return self._SendMessage(ping_msg, self._ping_timeout)
+    ping_msg.properties[Timeout.KEY] = self._ping_timeout
+    return self._SendMessage(ping_msg)
 
   def _OnPingResponse(self, ar):
     """Handles the response to a ping.  On failure, shuts down the dispatcher.
@@ -124,7 +126,7 @@ class MessageDispatcher(object):
       self._exception = ar.exception
       self._Shutdown(DispatcherState.PING_TIMEOUT)
 
-  def _SendMessage(self, msg, timeout=None, oneway=False):
+  def _SendMessage(self, msg, oneway=False):
     """Send a message to the remote host.
 
     Args:
@@ -142,8 +144,8 @@ class MessageDispatcher(object):
     sink_stack = self._CreateSinkStack()
     ar_sink = None
     if not oneway:
-      ar_sink = sink.GeventReplySink()
-    sink_stack.AsyncProcessMessage(msg, None, ar_sink)
+      ar_sink = sink.GeventMessageTerminatorSink()
+    sink_stack.AsyncProcessMessage(msg, ar_sink)
 
     return ar_sink._ar
 
