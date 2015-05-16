@@ -3,8 +3,8 @@ import functools
 import time
 import traceback
 
-from src.thriftmux import ThriftMux
-from src.thealthysocket import _VARZ_DATA
+from scales.thriftmux import ThriftMux
+from scales.thealthysocket import _VARZ_DATA
 
 import gevent
 from gevent import monkey

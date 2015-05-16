@@ -5,15 +5,12 @@ import types
 
 from cStringIO import StringIO
 from thrift.protocol import TBinaryProtocol
-from thrift.transport import TTransport
 from thrift.transport.TTransport import TFramedTransport
 
-from src.dispatch import MessageDispatcher
-from src.pool import (
+from scales.pool import (
   RoundRobinPoolMemberSelector,
   SingletonPool,
   StaticServerSetProvider)
-from src.thealthysocket import THealthySocket
 
 class TScalesTransport(TFramedTransport):
   def __init__(self, dispatcher_pool):

@@ -4,22 +4,17 @@ from cStringIO import StringIO
 import gevent
 from gevent.event import AsyncResult
 
-from ttypes import (
-  DispatcherState,
-  MessageType)
+from ttypes import DispatcherState
 from message import (
   Deadline,
-  TdiscardedMessage,
   TdispatchMessage,
-  Message,
   MessageSerializer,
-  RdispatchMessage,
-  RerrorMessage,
   Timeout,
   TpingMessage)
 
-import sink
+import thriftmuxsink
 
+class DispatcherException(Exception): pass
 
 class MessageDispatcher(object):
   """Handles dispatching incoming and outgoing messages to a socket.
@@ -79,8 +74,8 @@ class MessageDispatcher(object):
 
   def _CreateSinkStack(self):
     sinks = [
-      sink.TimeoutSink(),
-      sink.ThrfitMuxMessageSerializerSink(),
+      thriftmuxsink.TimeoutSink(),
+      thriftmuxsink.ThrfitMuxMessageSerializerSink(),
       self._transport_sink
     ]
     for s in range(0, len(sinks) - 1):
@@ -144,10 +139,10 @@ class MessageDispatcher(object):
     sink_stack = self._CreateSinkStack()
     ar_sink = None
     if not oneway:
-      ar_sink = sink.GeventMessageTerminatorSink()
+      ar_sink = thriftmuxsink.GeventMessageTerminatorSink()
     sink_stack.AsyncProcessMessage(msg, ar_sink)
 
-    return ar_sink._ar
+    return ar_sink.async_result if ar_sink else None
 
   def _Shutdown(self, termainal_state, excr=None):
     """Shutdown the dispatcher, no more requests will be accepted after.
