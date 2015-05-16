@@ -1,7 +1,4 @@
 import collections
-import functools
-import inspect
-import types
 
 from scales.dispatch import MessageDispatcher
 
@@ -14,42 +11,6 @@ from scales.sink import PoolMemberSelectorTransportSink
 class Scales(object):
   """Factory for scales thrift services.
   """
-
-  @staticmethod
-  def CreateProxy(Client, dispatcher):
-    """Creates a proxy class that takes all method on Client
-    and sends them to a dispatcher.
-
-    Args:
-      Client - A class object implementing one or more thrift interfaces.
-      dispatcher - An instance of a MessageDispatcher.
-    """
-
-    def ProxyMethod(method_name, orig_method):
-      @functools.wraps(orig_method)
-      def _ProxyMethod(self, *args, **kwargs):
-        ar = dispatcher.DispatchMethodCall(Client, method_name, args)
-        return ar.get()
-      return types.MethodType(_ProxyMethod, Client)
-
-    # Find the thrift interface on the client
-    iface = next(b for b in Client.__bases__ if b.__name__ == 'Iface')
-    is_thrift_method = lambda m: inspect.ismethod(m) and not inspect.isbuiltin(m)
-
-    # Find all methods on the thrift interface
-    iface_methods = dir(iface)
-    is_iface_method = lambda m: m and is_thrift_method(m) and m.__name__ in iface_methods
-
-    # Then get the methods on the client that it implemented from the interface
-    client_methods = { m[0]: ProxyMethod(*m)
-                       for m in inspect.getmembers(Client, is_iface_method) }
-
-    # Create a proxy class to intercept the thrift methods.
-    proxy = type(
-        '_ScalesTransparentProxy<%s>' % Client.__module__,
-        (iface, object),
-        client_methods)
-    return proxy
 
   class _ServiceBuilder(object):
     Endpoint = collections.namedtuple('Endpoint', 'host port')
@@ -70,6 +31,7 @@ class Scales(object):
       self._transport_sink_provider = None
       self._message_sink_provider = None
       self._pool = None
+      self._service_provider = None
 
     class ScalesSinkStackBuilder(object):
       def __init__(self, pool, message_sink_provider):
@@ -156,6 +118,10 @@ class Scales(object):
       self._message_sink_provider = message_sink_provider
       return self
 
+    def setServiceProvider(self, service_provider):
+      self._service_provider = service_provider
+      return self
+
     def build(self):
       if not self._pool:
         self._BuildPool()
@@ -165,7 +131,7 @@ class Scales(object):
           self._timeout)
 
       self._built = True
-      return Scales.CreateProxy(self._client, dispatcher)
+      return self._service_provider.CreateServiceClient(self._client, dispatcher)
 
   @staticmethod
   def newBuilder(Client):

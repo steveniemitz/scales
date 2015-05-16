@@ -226,10 +226,6 @@ class MessageSerializer(object):
   }
 
   @staticmethod
-  def Marshal():
-    pass
-
-  @staticmethod
   def Unmarshal(tag, msg_type, data, ctx):
     msg_type_cls = MessageSerializer.MESSAGE_MAP[msg_type]
     msg = msg_type_cls.Unmarshal(data, ctx)

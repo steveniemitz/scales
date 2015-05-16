@@ -18,7 +18,7 @@ if __name__ == '__main__':
       while True:
         x+=1
         print '%d %s' % (n, client.hi('from %d test %s' % (n, x)))
-        #gevent.sleep(random.random())
+        gevent.sleep(random.random() / 2)
 
     gevent.spawn(fn2, 1)
     gevent.spawn(fn2, 2)
