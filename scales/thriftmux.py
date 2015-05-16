@@ -1,51 +1,51 @@
-__author__ = 'steveniemitz'
 from thrift.transport import TTransport
+from thrift.transport import TSocket
 
-from scales.dispatch import MessageDispatcher
-from scales.builder import Scales
-from scales.thealthysocket import THealthySocket
 from scales import thriftmuxsink
+from scales.builder import Scales
+from scales.pool import RoundRobinPoolMemberSelector
+from scales.varzsocketwrapper import VarzSocketWrapper
 
 _MUXERS = {}
-class MuxDispatcherProvider(object):
-  class ThriftMuxSocketTransportSinkProvider(object):
-    def __init__(self, sock):
-      self._sock = sock
-
-    def GetTransportSink(self):
-      sock = self._sock
-      self._sock = None
-      sock.open()
-      return thriftmuxsink.ThriftMuxSocketTransportSink(sock)
-
+class ThriftMuxSocketTransportSinkProvider(object):
   @staticmethod
-  def AreDispatchersSharable():
+  def AreTransportsSharable():
     return True
 
-  def GetConnection(self, server, pool_name, health_cb, timeout):
+  def _CreateSocket(self, host, port):
+    return TSocket.TSocket(host, port)
+
+  def GetConnection(self, server, pool_name, health_cb):
     key = (server, pool_name)
     if key in _MUXERS:
-      disp, cbs = _MUXERS[key]
+      sink, cbs = _MUXERS[key]
     else:
-      sock = THealthySocket(server.host, server.port, None, None, pool_name)
-      transport_sink_provider = self.ThriftMuxSocketTransportSinkProvider(sock)
-      disp = MessageDispatcher(transport_sink_provider, None, timeout)
+      sock = self._CreateSocket(server.host, server.port)
+      healthy_sock = VarzSocketWrapper(sock, pool_name)
+      sink = thriftmuxsink.ThriftMuxSocketTransportSink(healthy_sock)
       cbs = set()
-      _MUXERS[key] = (disp, cbs)
+      _MUXERS[key] = (sink, cbs)
 
     if health_cb not in cbs:
       cbs.add(health_cb)
-      disp.shutdown_result.rawlink(lambda ar: health_cb(server))
+      sink.shutdown_result.rawlink(lambda ar: health_cb(server))
+    return sink
 
-    return disp
-
-  def IsConnectionFault(self, e):
+  @staticmethod
+  def IsConnectionFault(e):
     return isinstance(e,  TTransport.TTransportException)
 
+class ThriftMuxMessageSinkProvider(object):
+  @staticmethod
+  def CreateMessageSink():
+    return [
+      thriftmuxsink.TimeoutSink(),
+      thriftmuxsink.ThrfitMuxMessageSerializerSink()
+    ]
 
 class ThriftMux(object):
   @staticmethod
-  def newService(Client, uri):
+  def newClient(Client, uri):
     """Create a new client for a ThriftMux service.
 
     Args:
@@ -58,7 +58,9 @@ class ThriftMux(object):
     """
     return Scales \
       .newBuilder(Client) \
-      .setDispatcherFactory(MuxDispatcherProvider()) \
+      .setPoolMemberSelector(RoundRobinPoolMemberSelector()) \
+      .setMessageSinkProvider(ThriftMuxMessageSinkProvider()) \
+      .setTransportSinkProvider(ThriftMuxSocketTransportSinkProvider()) \
       .setUri(uri) \
-      .setTimeout(.5) \
+      .setTimeout(5) \
       .build()

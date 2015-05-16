@@ -7,21 +7,24 @@ from cStringIO import StringIO
 from thrift.protocol import TBinaryProtocol
 from thrift.transport.TTransport import TFramedTransport
 
+from scales.dispatch import MessageDispatcher
+
 from scales.pool import (
-  RoundRobinPoolMemberSelector,
   SingletonPool,
   StaticServerSetProvider)
 
+from scales.sink import PoolMemberSelectorTransportSink
+
 class TScalesTransport(TFramedTransport):
-  def __init__(self, dispatcher_pool):
-    self._dispatcher_pool = dispatcher_pool
+  def __init__(self, dispatcher):
+    self._dispatcher = dispatcher
     self._read_future = None
     TFramedTransport.__init__(self, None)
 
   def flush(self):
     payload = getattr(self, '_TFramedTransport__wbuf')
     setattr(self, '_TFramedTransport__wbuf', StringIO())
-    self._read_future = self._dispatcher_pool.Get().SendDispatchMessage(payload)
+    self._read_future = self._dispatcher.SendDispatchMessage(payload)
 
   def readFrame(self):
     if self._read_future is None:
@@ -49,22 +52,14 @@ class Scales(object):
   """
 
   @staticmethod
-  def _WrapClient(Client, pool):
-    class WrapperPool(object):
-      def __init__(self, dispatcher):
-        self._dispatcher = dispatcher
-
-      def Get(self):
-        return self._dispatcher
-
+  def _WrapClient(Client, dispatcher):
     def Proxy(orig_method):
       @functools.wraps(orig_method)
       def _Wrap(self, *args, **kwargs):
-        with pool.SafeGet() as dispatcher:
-          mux = TScalesTransport(WrapperPool(dispatcher))
-          prot = TBinaryProtocol.TBinaryProtocolAccelerated(mux)
-          cli = Client(prot, prot)
-          return orig_method(cli, *args, **kwargs)
+        mux = TScalesTransport(dispatcher)
+        prot = TBinaryProtocol.TBinaryProtocolAccelerated(mux)
+        cli = Client(prot, prot)
+        return orig_method(cli, *args, **kwargs)
       return types.MethodType(_Wrap, Client)
 
     # Find the thrift interface on the client
@@ -89,20 +84,74 @@ class Scales(object):
   class _ServiceBuilder(object):
     Endpoint = collections.namedtuple('Endpoint', 'host port')
     Server = collections.namedtuple('Server', 'service_endpoint')
+    _POOLS = {}
+
+    def _CreatePoolKey(self):
+      return (
+        self._name,
+        self._server_set_provider.__class__,
+        self._transport_sink_provider.__class__,
+        self._selector.__class__,
+        self._message_sink_provider.__class__,
+        self._initial_size_members,
+        self._initial_size_pct,
+        self._timeout)
+
+    def CreateMessageSink(self):
+      key = self._CreatePoolKey()
+      pool = self._POOLS.get(key, None)
+      if not pool:
+        pool = SingletonPool(
+          self._name,
+          self._server_set_provider,
+          self._transport_sink_provider,
+          self._selector,
+          self._initial_size_members,
+          self._initial_size_pct,
+          self._transport_sink_provider.AreTransportsSharable()
+        )
+        self._POOLS[key] = pool
+
+      message_stack = self._message_sink_provider.CreateMessageSink()
+      transport_stack = [
+        PoolMemberSelectorTransportSink(pool)
+      ]
+      sink_stack = message_stack + transport_stack
+      for s in range(0, len(sink_stack) - 1):
+        sink_stack[s].next_sink = sink_stack[s + 1]
+
+      return sink_stack[0]
 
     def __init__(self, Client):
+      self._built = False
       self._client = Client
       self._name = Client.__module__
       self._uri = None
       self._zk_servers = None
-      self._selector = RoundRobinPoolMemberSelector()
+      self._selector = None
       self._timeout = 10
       self._initial_size_members = 0
       self._initial_size_pct = 0
-      self._dispatcher_factory = None
+      self._server_set_provider = None
+      self._transport_sink_provider = None
+      self._message_sink_provider = None
 
     def setUri(self, uri):
       self._uri = uri
+      if self._uri.startswith('zk://'):
+        self._server_set_provider = None
+      elif self._uri.startswith('tcp://'):
+        uri = self._uri[6:]
+        servers = uri.split(',')
+        server_objs = []
+        for s in servers:
+          parts = s.split(':')
+          server = self.Server(self.Endpoint(parts[0], int(parts[1])))
+          server_objs.append(server)
+
+        self._server_set_provider = StaticServerSetProvider(server_objs)
+      else:
+        raise NotImplementedError("Invalid URI")
       return self
 
     def setZkServers(self, servers):
@@ -125,38 +174,18 @@ class Scales(object):
       self._initial_size_pct = size
       return self
 
-    def setDispatcherFactory(self, factory):
-      self._dispatcher_factory = factory
+    def setTransportSinkProvider(self, transport_sink_provider):
+      self._transport_sink_provider = transport_sink_provider
+      return self
+
+    def setMessageSinkProvider(self, message_sink_provider):
+      self._message_sink_provider = message_sink_provider
       return self
 
     def build(self):
-      if self._uri.startswith('zk://'):
-        server_set_provider = None
-      elif self._uri.startswith('tcp://'):
-        uri = self._uri[6:]
-        servers = uri.split(',')
-        server_objs = []
-        for s in servers:
-          parts = s.split(':')
-          server = self.Server(self.Endpoint(parts[0], int(parts[1])))
-          server_objs.append(server)
-
-        server_set_provider = functools.partial(StaticServerSetProvider,
-          servers=server_objs)
-      else:
-        raise NotImplementedError("Invalid URI")
-
-      pool = SingletonPool(
-        self._name,
-        server_set_provider,
-        self._dispatcher_factory,
-        self._selector,
-        self._initial_size_members,
-        self._initial_size_pct,
-        self._timeout,
-        self._dispatcher_factory.AreDispatchersSharable()
-      )
-      return Scales._WrapClient(self._client, pool)
+      dispatcher = MessageDispatcher(self, self._timeout)
+      self._built = True
+      return Scales._WrapClient(self._client, dispatcher)
 
   @staticmethod
   def newBuilder(Client):

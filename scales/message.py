@@ -1,3 +1,5 @@
+import traceback
+
 from struct import (pack, unpack)
 from ttypes import (Enum, MessageType)
 
@@ -220,10 +222,16 @@ class MessageSerializer(object):
 
 class SystemMessage(object): pass
 class TimeoutMessage(SystemMessage): pass
-class ErrorMessage(SystemMessage):
+class SystemErrorMessage(SystemMessage):
   def __init__(self, excr):
     self._exception = excr
+    self._stack = traceback.format_exc()
 
-class ShutdownMessage(SystemMessage):
-  def __init__(self, excr, reason):
-    pass
+  @property
+  def exception(self):
+    return self._exception
+
+  @property
+  def stack(self):
+    return self._stack
+

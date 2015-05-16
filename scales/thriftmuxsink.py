@@ -8,23 +8,23 @@ from gevent.event import AsyncResult, Event
 from gevent.queue import Queue
 
 from scales.message import (
-  RdispatchMessage,
-  RerrorMessage,
-  TdiscardedMessage,
   MessageSerializer,
+  MessageType,
+  RerrorMessage,
+  SystemErrorMessage,
+  TdiscardedMessage,
   TimeoutMessage,
   Timeout,
   Tag)
 
 from scales.sink import (
+  AsyncMessageSink,
   ClientChannelSinkStack,
   ClientFormatterSink,
   SyncMessageSink,
-  AsyncMessageSink,
-
-  ServerException,
-  TimeoutException
 )
+
+from scales.ttypes import DispatcherState
 
 class TagPool(object):
   """A class which manages a pool of tags
@@ -68,21 +68,119 @@ class ThriftMuxSocketTransportSink(ClientFormatterSink):
     self._tag_map = {}
     self._socket = socket
     self._send_queue = Queue()
-    gevent.spawn(self._SendLoop)
-    gevent.spawn(self._RecvLoop)
+    self._ping_timeout = 5
     self._shutdown_ar = AsyncResult()
+    self._ping_msg = self._BuildHeader(1, MessageType.Tping, 0)
+    self._ping_ar = None
+    self._state = DispatcherState.UNINITIALIZED
+    self._open_result = None
+
+  @property
+  def shutdown_result(self):
+    return self._shutdown_ar
+
+  @property
+  def isActive(self):
+    return self._state != DispatcherState.STOPPED
+
+  def open(self):
+    """Initializes the dispatcher, opening a connection to the remote host.
+    This method may only be called once.
+    """
+    if self._state == DispatcherState.RUNNING:
+      return
+    elif self._open_result:
+      self._open_result.get()
+      return
+
+    self._open_result = AsyncResult()
+    try:
+      self._socket.open()
+      gevent.spawn(self._RecvLoop)
+      gevent.spawn(self._SendLoop)
+
+      self._state = DispatcherState.STARTING
+      ar = self._SendPingMessage()
+      ar.get()
+      gevent.spawn(self._PingLoop)
+      self._state = DispatcherState.RUNNING
+      self._open_result.set()
+    except Exception as e:
+      self._open_result.set_exception(e)
+      raise
+
+  def close(self):
+    self._Shutdown('close invoked')
+
+  def isOpen(self):
+    return self._state == DispatcherState.RUNNING
+
+  def testConnection(self):
+    if not self._state == DispatcherState.RUNNING:
+      return False
+    if hasattr(self._socket, 'testConnection'):
+      return self._socket.testConnection()
+    else:
+      return True
+
+  def _Shutdown(self, reason):
+    if not self.isActive:
+      return
+
+    self._state = DispatcherState.STOPPED
+    self._socket.close()
+    if not isinstance(reason, Exception):
+      reason = Exception(str(reason))
+    self._shutdown_ar.set_exception(reason)
+    msg = SystemErrorMessage(reason)
+
+    for sink_stack in self._tag_map.values():
+      sink_stack.DispatchReplyMessage(msg)
+
+  def _SendPingMessage(self):
+    """Constucts and sends a Tping message.
+    """
+    self._ping_ar = AsyncResult()
+    self._send_queue.put(self._ping_msg)
+    gevent.spawn(self._PingTimeoutHelper)
+    return self._ping_ar
+
+  def _PingTimeoutHelper(self):
+    ar = self._ping_ar
+    ar.wait(self._ping_timeout)
+    if not ar.successful():
+      self._Shutdown('Ping Timeout')
+
+  def _OnPingResponse(self, msg_type, stream):
+    """Handles the response to a ping.  On failure, shuts down the dispatcher.
+    """
+    ar, self._ping_ar = self._ping_ar, None
+    if msg_type == MessageType.Rping:
+      ar.set()
+    else:
+      ar.set_exception(Exception("Invalid ping response"))
+
+  def _PingLoop(self):
+    """Periodically pings the remote server.
+    """
+    while self.isActive:
+      gevent.sleep(30)
+      if not self.isActive:
+        self._SendPingMessage()
+      else:
+        break
 
   def _SendLoop(self):
     """Dispatch messages from the send queue to the remote server.
 
     Note: Messages in the queue have already been serialized into wire format.
     """
-    while True:
+    while self.isActive:
       try:
         payload = self._send_queue.get()
         self._socket.write(payload)
       except Exception as e:
-        self._shutdown_ar.set_exception(e)
+        self._Shutdown(e)
         break
 
   def _RecvLoop(self):
@@ -91,24 +189,27 @@ class ThriftMuxSocketTransportSink(ClientFormatterSink):
     Note: Deserialization and dispatch occurs on a seperate greenlet, this only
     reads the message off the wire.
     """
-    while True:
+    while self.isActive:
       try:
         sz, = unpack('!i', self._socket.readAll(4))
         buf = StringIO(self._socket.readAll(sz))
         gevent.spawn(self._ProcessReply, buf)
       except Exception as e:
-        self._shutdown_ar.set_exception(e)
+        self._Shutdown(e)
         break
 
   def _ProcessReply(self, stream):
     try:
-      _, tag = ThrfitMuxMessageSerializerSink.ReadHeader(stream)
-      stream.seek(0)
-      if tag != 0:
+      msg_type, tag = ThrfitMuxMessageSerializerSink.ReadHeader(stream)
+      if tag == 1: #Ping
+        self._OnPingResponse(msg_type, stream)
+      elif tag != 0:
+        stream.seek(0)
         reply_stack = self._tag_map.get(tag)
         if reply_stack:
           reply_stack.AsyncProcessResponse(stream)
     except Exception:
+      #TODO: log
       pass
 
   def _ReleaseTag(self, tag):
@@ -152,7 +253,7 @@ class ThriftMuxSocketTransportSink(ClientFormatterSink):
     payload = header + stream.getvalue()
     self._send_queue.put(payload)
 
-  def AsyncProcessResponse(self, sink_stack, stream):
+  def AsyncProcessResponse(self, sink_stack, context, stream):
     raise Exception("Not supported.")
 
 
@@ -189,7 +290,7 @@ class ThrfitMuxMessageSerializerSink(ClientFormatterSink):
   def AsyncProcessRequest(self, sink_stack, msg, stream):
     raise Exception("Not supported")
 
-  def AsyncProcessResponse(self, sink_stack, stream):
+  def AsyncProcessResponse(self, sink_stack, context, stream):
     try:
       msg_type, tag = ThrfitMuxMessageSerializerSink.ReadHeader(stream)
       msg = self._serializer.Unmarshal(tag, msg_type, stream)
@@ -245,25 +346,3 @@ class TimeoutSink(AsyncMessageSink):
       reply_sink = TimeoutReplySink(self, msg, reply_sink, timeout)
     return self.next_sink.AsyncProcessMessage(msg, reply_sink)
 
-
-class GeventMessageTerminatorSink(SyncMessageSink):
-  def __init__(self):
-    super(GeventMessageTerminatorSink, self).__init__()
-    self._ar = AsyncResult()
-
-  def SyncProcessMessage(self, msg):
-    if isinstance(msg, RdispatchMessage):
-      if msg.error:
-        self._ar.set_exception(ServerException(msg.error))
-      else:
-        self._ar.set(msg.response)
-    elif isinstance(msg, TimeoutMessage):
-      self._ar.set_exception(TimeoutException(
-        'The call did not complete within the specified timeout '
-        'and has been aborted.'))
-    else:
-      self._ar.set(msg)
-
-  @property
-  def async_result(self):
-    return self._ar

@@ -14,8 +14,18 @@ import gevent
 
 LOG = logging.getLogger("scales.SingletonPool")
 
-def StaticServerSetProvider(servers, on_join, on_leave):
-  return servers
+class ServerSetProvider(object):
+  def GetServers(self, on_join, on_leave):
+    raise NotImplementedError()
+
+
+class StaticServerSetProvider(ServerSetProvider):
+  def __init__(self, servers):
+    self._servers = servers
+
+  def GetServers(self, on_join, on_leave):
+    return self._servers
+
 
 def ScheduleOperationWithPeriodWorker(period, operation):
   while True:
@@ -61,14 +71,14 @@ class SingletonPool(object):
       member_selector,
       initial_size_min_members=0,
       initial_size_factor=0,
-      timeout=None,
       shareable_resources=False):
     """Initializes the resource pool.
 
     Args:
       pool_name - The name of this pool to be used in logging.
-      server_set_provider - A callable that takes two parameters, on_join and on_leave,
-        and returns a server set.  A server set must be iterable.
+      server_set_provider - A class that provides a GetServers method that
+        takes two parameters, on_join and on_leave, and returns a server set.
+        A server set must be iterable.
       connection_provider - A class that provides two methods:
         GetConnection(): Must return a "connection" that implements:
           - open()
@@ -86,8 +96,6 @@ class SingletonPool(object):
         initial_size_factor = .5, 25 connections will be created at startup.
         The pool size is the maximum of initial_size_min_members and
         initial_size_factor.
-      timeout_ms - The timeout for connections in the pool, in milliseconds.
-        If none, connections never time out.
       shareable_resources - If True, connections are never removed from the pool,
         and instead are returned to the tail.  This should be used if the
         underlying resources are safe to share.
@@ -95,11 +103,10 @@ class SingletonPool(object):
     self._shareable_resources = shareable_resources
     self._initialized = False
     self._connection_provider = connection_provider
-    self._timeout = timeout
     self._pool_name = pool_name
     self._member_selector = member_selector
     LOG.info("Creating SingletonPool for %s" % pool_name)
-    self.server_set = server_set_provider(
+    self.server_set = server_set_provider.GetServers(
       on_join=self._OnServerSetJoin,
       on_leave=self._OnServerSetLeave)
 
@@ -193,8 +200,7 @@ class SingletonPool(object):
     return self._connection_provider.GetConnection(
       shard,
       self._pool_name,
-      self._HealthCallback,
-      self._timeout)
+      self._HealthCallback)
 
   def Get(self):
     num_retries = 0
