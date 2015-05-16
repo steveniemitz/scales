@@ -10,7 +10,6 @@ from gevent.queue import Queue
 from scales.message import (
   MessageSerializer,
   MessageType,
-  RerrorMessage,
   SystemErrorMessage,
   TdiscardedMessage,
   TimeoutMessage,
@@ -241,7 +240,7 @@ class ThriftMuxSocketTransportSink(ClientFormatterSink):
                 *self._EncodeTag(tag))
 
   def AsyncProcessRequest(self, sink_stack, msg, stream):
-    if sink_stack:
+    if not sink_stack.is_one_way:
       tag = self._tag_pool.get()
       msg.properties[Tag.KEY] = tag
       self._tag_map[tag] = sink_stack
@@ -282,9 +281,9 @@ class ThrfitMuxMessageSerializerSink(ClientFormatterSink):
 
   def AsyncProcessMessage(self, msg, reply_sink):
     fpb = StringIO()
-    msg.Marshal(fpb)
+    ctx = msg.Marshal(fpb)
     sink_stack = ClientChannelSinkStack(reply_sink)
-    sink_stack.Push(self)
+    sink_stack.Push(self, ctx)
     self.next_sink.AsyncProcessRequest(sink_stack, msg, fpb)
 
   def AsyncProcessRequest(self, sink_stack, msg, stream):
@@ -293,10 +292,9 @@ class ThrfitMuxMessageSerializerSink(ClientFormatterSink):
   def AsyncProcessResponse(self, sink_stack, context, stream):
     try:
       msg_type, tag = ThrfitMuxMessageSerializerSink.ReadHeader(stream)
-      msg = self._serializer.Unmarshal(tag, msg_type, stream)
-    except Exception:
-      why = traceback.format_exc()
-      msg = RerrorMessage(why)
+      msg = self._serializer.Unmarshal(tag, msg_type, stream, context)
+    except Exception as ex:
+      msg = SystemErrorMessage(ex)
 
     sink_stack.DispatchReplyMessage(msg)
 

@@ -4,6 +4,7 @@ from scales.message import (
   Deadline,
   SystemErrorMessage,
   RdispatchMessage,
+  RerrorMessage,
   TdispatchMessage,
   Timeout,
   TimeoutMessage,)
@@ -24,6 +25,8 @@ class GeventMessageTerminatorSink(SyncMessageSink):
         self._ar.set_exception(ServerException(msg.error))
       else:
         self._ar.set(msg.response)
+    elif isinstance(msg, RerrorMessage):
+      self._ar.set_exception(msg.error)
     elif isinstance(msg, TimeoutMessage):
       self._ar.set_exception(TimeoutException(
         'The call did not complete within the specified timeout '
@@ -31,7 +34,7 @@ class GeventMessageTerminatorSink(SyncMessageSink):
     elif isinstance(msg, SystemErrorMessage):
       self._ar.set_exception(msg.exception)
     else:
-      self._ar.set(msg)
+      self._ar.set_exception(SystemErrorMessage('Unknown response message'))
 
   @property
   def async_result(self):
@@ -52,12 +55,13 @@ class MessageDispatcher(object):
     self._client_stack_builder = client_stack_builder
     self._dispatch_timeout = dispatch_timeout
 
-  def SendDispatchMessage(self, thrift_payload, timeout=None):
-    """Creates and posts a Tdispatch message to the send queue.
+  def DispatchMethodCall(self, service, method, args, timeout=None):
+    """Creates and posts a Tdispatch message to a client sink stack.
 
     Args:
-      thrift_payload - A raw serialized thirft method call payload.  Note: This
-                       must NOT be framed.
+      service - The thrift client class originating this call.
+      method  - The method being called.
+      args    - The parameters passed to the method.
       timeout - An optional timeout.  If not set, the global dispatch timeout
                 will be applied.
 
@@ -71,27 +75,10 @@ class MessageDispatcher(object):
     if timeout:
       ctx['com.twitter.finagle.Deadline'] = Deadline(timeout)
 
-    disp_msg = TdispatchMessage(thrift_payload, ctx)
+    disp_msg = TdispatchMessage(service, method, args, ctx)
     disp_msg.properties[Timeout.KEY] = timeout
-    ar = self._SendMessage(disp_msg)
-    return ar
 
-  def _SendMessage(self, msg, oneway=False):
-    """Send a message to the remote host.
-
-    Args:
-      msg - The message object to serialize and send.
-      timeout - An optional timeout for the response.
-      oneway - If true, no response is expected and no event is allocated for
-               the response.  Note: messages with oneway = True always have
-               tag = 0.
-    Returns:
-      An AsyncResult representing the server response, or None if oneway=True.
-    """
-    message_sink = self._client_stack_builder.CreateMessageSink()
-    ar_sink = None
-    if not oneway:
-      ar_sink = GeventMessageTerminatorSink()
-    message_sink.AsyncProcessMessage(msg, ar_sink)
-
+    message_sink = self._client_stack_builder.CreateSinkStack()
+    ar_sink = GeventMessageTerminatorSink()
+    message_sink.AsyncProcessMessage(disp_msg, ar_sink)
     return ar_sink.async_result if ar_sink else None

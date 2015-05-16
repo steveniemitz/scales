@@ -72,6 +72,9 @@ class ClientChannelSinkStack(SinkStack):
     if self._reply_sink:
       self._reply_sink.SyncProcessMessage(msg)
 
+  @property
+  def is_one_way(self):
+    return self._reply_sink is None
 
 class PoolMemberSelectorTransportSink(ClientChannelSink):
   def __init__(self, pool):
@@ -96,4 +99,4 @@ class PoolMemberSelectorTransportSink(ClientChannelSink):
     self._pool.Return(*context)
 
     next_sink, next_ctx = sink_stack.Pop()
-    next_sink.AsyncProcessResponse(sink_stack, context, stream)
+    next_sink.AsyncProcessResponse(sink_stack, next_ctx, stream)

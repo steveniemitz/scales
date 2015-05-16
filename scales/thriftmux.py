@@ -37,7 +37,7 @@ class ThriftMuxSocketTransportSinkProvider(object):
 
 class ThriftMuxMessageSinkProvider(object):
   @staticmethod
-  def CreateMessageSink():
+  def CreateMessageSinks():
     return [
       thriftmuxsink.TimeoutSink(),
       thriftmuxsink.ThrfitMuxMessageSerializerSink()

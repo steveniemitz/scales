@@ -1,6 +1,9 @@
 import traceback
-
 from struct import (pack, unpack)
+
+from thrift.protocol.TBinaryProtocol import TBinaryProtocolAccelerated
+from thrift.transport.TTransport import TMemoryBuffer
+
 from ttypes import (Enum, MessageType)
 
 class Marshallable(object):
@@ -8,7 +11,7 @@ class Marshallable(object):
     raise NotImplementedError()
 
   @classmethod
-  def Unmarshal(cls, buf):
+  def Unmarshal(cls, buf, ctx):
     raise NotImplementedError()
 
 
@@ -79,17 +82,19 @@ class Message(Marshallable):
     raise NotImplementedError()
 
   @classmethod
-  def Unmarshal(cls, buf):
+  def Unmarshal(cls, buf, ctx):
     raise NotImplementedError()
 
 
 class TdispatchMessage(Message):
-  def __init__(self, data, ctx=None, dst=None, dtab=None):
+  def __init__(self, service, method, args, ctx=None, dst=None, dtab=None):
     super(TdispatchMessage, self).__init__(MessageType.Tdispatch)
     self._ctx = ctx or {}
     self._dst = dst
     self._dtab = dtab
-    self._data = data
+    self._service = service
+    self._method = method
+    self._args = args
 
   def _GetContextSize(self):
     n = 2
@@ -113,8 +118,12 @@ class TdispatchMessage(Message):
   def Marshal(self, buf):
     self._WriteContext(buf)
     buf.write(pack('!hh', 0, 0)) # len(dst), len(dtab), both unsupported
-    self._data.seek(0)
-    pipe_io(self._data, buf)
+    tbuf = TMemoryBuffer()
+    tbuf._buffer = buf
+    prot = TBinaryProtocolAccelerated(tbuf)
+    cli = self._service(prot)
+    getattr(cli, 'send_' + self._method)(*self._args)
+    return self._service, self._method
 
 
 class TpingMessage(Message):
@@ -141,7 +150,7 @@ class RpingMessage(Message):
     super(RpingMessage, self).__init__(MessageType.Rping)
 
   @classmethod
-  def Unmarshal(cls, buf):
+  def Unmarshal(cls, buf, ctx):
     return RpingMessage()
 
 
@@ -163,13 +172,21 @@ class RdispatchMessage(Message):
       buf.read(sz)
 
   @classmethod
-  def Unmarshal(cls, buf):
+  def Unmarshal(cls, buf, ctx):
     status, nctx = unpack('!bh', buf.read(3))
     for n in range(0, nctx):
       cls._ReadContext(buf)
 
     if status == cls.Rstatus.OK:
-      return cls(buf)
+      tbuf = TMemoryBuffer()
+      tbuf._buffer = buf
+      prot = TBinaryProtocolAccelerated(tbuf)
+      client_cls, method = ctx
+      cli = client_cls(prot)
+      response = getattr(cli, 'recv_%s' % method)()
+      buf.close()
+
+      return cls(response)
     elif status == cls.Rstatus.NACK:
       return cls(err='The server returned a NACK')
     else:
@@ -190,7 +207,7 @@ class RerrorMessage(Message):
     self._err = err
 
   @classmethod
-  def Unmarshal(cls, buf):
+  def Unmarshal(cls, buf, ctx):
     why = buf.read()
     return cls(why)
 
@@ -213,9 +230,9 @@ class MessageSerializer(object):
     pass
 
   @staticmethod
-  def Unmarshal(tag, msg_type, data):
+  def Unmarshal(tag, msg_type, data, ctx):
     msg_type_cls = MessageSerializer.MESSAGE_MAP[msg_type]
-    msg = msg_type_cls.Unmarshal(data)
+    msg = msg_type_cls.Unmarshal(data, ctx)
     msg.tag = tag
     return msg
 
