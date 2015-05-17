@@ -1,8 +1,13 @@
+import sys
+
 from struct import (pack, unpack)
 
 from thrift.protocol.TBinaryProtocol import TBinaryProtocolAccelerated
 from thrift.transport.TTransport import TMemoryBuffer
-from thrift.Thrift import TMessageType
+from thrift.Thrift import (
+  TApplicationException,
+  TMessageType
+)
 
 from scales.message import (
   RdispatchMessage,
@@ -36,17 +41,60 @@ class MessageSerializer(object):
     }
 
   @staticmethod
-  def _Marshal_Tdispatch(msg, buf):
-    MessageSerializer._WriteContext(msg._ctx, buf)
-    buf.write(pack('!hh', 0, 0)) # len(dst), len(dtab), both unsupported
+  def _SerializeThriftCall(msg, buf):
     tbuf = TMemoryBuffer()
     tbuf._buffer = buf
     prot = TBinaryProtocolAccelerated(tbuf, True, True)
-    cli = msg._service(prot)
-    getattr(cli, 'send_' + msg._method)(*msg._args)
-    is_one_way = not hasattr(cli, 'recv_' + msg._method)
+    service, method, args, kwargs = msg._service, msg._method, msg._args, msg._kwargs
+    service_module = sys.modules[service.__module__]
+    is_one_way = not hasattr(service_module, '%s_result' % method)
+    args_cls = getattr(service_module, '%s_args' % method)
 
-    return is_one_way, (msg._service, msg._method)
+    prot.writeMessageBegin(msg._method, TMessageType.ONEWAY if is_one_way else TMessageType.CALL, 0)
+    thrift_args = args_cls(*args, **kwargs)
+    thrift_args.write(prot)
+    prot.writeMessageEnd()
+
+  @staticmethod
+  def _DeserializeThriftCall(buf, ctx):
+    tbuf = TMemoryBuffer()
+    tbuf._buffer = buf
+    iprot = TBinaryProtocolAccelerated(tbuf)
+
+    client_cls, method = ctx
+    module = sys.modules[client_cls.__module__]
+
+    (fname, mtype, rseqid) = iprot.readMessageBegin()
+    if mtype == TMessageType.EXCEPTION:
+      x = TApplicationException()
+      x.read(iprot)
+      iprot.readMessageEnd()
+      return x
+
+    result_cls = getattr(module, '%s_result' % method, None)
+    if result_cls:
+      result = result_cls()
+      result.read(iprot)
+    else:
+      result = None
+    iprot.readMessageEnd()
+
+    if not result:
+      return None
+    if getattr(result, 'success', None) is not None:
+      return result.success
+    if getattr(result, 'unavailable', None) is not None:
+      return result.unavailable
+    return TApplicationException(TApplicationException.MISSING_RESULT, "%s failed: unknown result" % method)
+
+  @staticmethod
+  def _Marshal_Tdispatch(msg, buf):
+    MessageSerializer._WriteContext(msg._ctx, buf)
+    buf.write(pack('!hh', 0, 0)) # len(dst), len(dtab), both unsupported
+    MessageSerializer._SerializeThriftCall(msg, buf)
+    # It's odd, but even "oneway" thrift messages get a response
+    # with finagle, so we need to allocate a tag and track them still.
+    return False, (msg._service, msg._method)
 
   @staticmethod
   def _Marshal_Tdiscarded(msg, buf):
@@ -78,15 +126,12 @@ class MessageSerializer(object):
       MessageSerializer._ReadContext(buf)
 
     if status == RdispatchMessage.Rstatus.OK:
-      tbuf = TMemoryBuffer()
-      tbuf._buffer = buf
-      prot = TBinaryProtocolAccelerated(tbuf)
-      client_cls, method = ctx
-      cli = client_cls(prot)
-      response = getattr(cli, 'recv_%s' % method)()
+      response = MessageSerializer._DeserializeThriftCall(buf, ctx)
       buf.close()
-
-      return RdispatchMessage(response)
+      if isinstance(response, Exception):
+        return RdispatchMessage(err=response)
+      else:
+        return RdispatchMessage(response)
     elif status == RdispatchMessage.Rstatus.NACK:
       return RdispatchMessage(err='The server returned a NACK')
     else:

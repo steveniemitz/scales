@@ -53,9 +53,12 @@ class Message(object):
   def isResponse(self):
     return self._type < 0
 
+  @property
+  def is_one_way(self):
+    return False
 
 class TdispatchMessage(Message):
-  def __init__(self, service, method, args, ctx=None, dst=None, dtab=None):
+  def __init__(self, service, method, args, kwargs, ctx=None, dst=None, dtab=None):
     super(TdispatchMessage, self).__init__(MessageType.Tdispatch)
     self._ctx = ctx or {}
     self._dst = dst
@@ -63,6 +66,7 @@ class TdispatchMessage(Message):
     self._service = service
     self._method = method
     self._args = args
+    self._kwargs = kwargs
 
 
 class TpingMessage(Message):
@@ -75,6 +79,10 @@ class TdiscardedMessage(Message):
     super(TdiscardedMessage, self).__init__(MessageType.BAD_Tdiscarded)
     self._reason = reason
     self._which = which
+
+  @property
+  def is_one_way(self):
+    return True
 
 
 class RpingMessage(Message):
@@ -101,7 +109,6 @@ class RdispatchMessage(Message):
   def error_message(self):
     return self._err
 
-
 class RerrorMessage(Message):
   def __init__(self, err):
     super(RerrorMessage, self).__init__(MessageType.Rerr)
@@ -114,6 +121,7 @@ class RerrorMessage(Message):
 
 class SystemMessage(object): pass
 class TimeoutMessage(SystemMessage): pass
+class OneWaySendCompleteMessage(SystemMessage): pass
 class SystemErrorMessage(SystemMessage):
   def __init__(self, excr):
     self._exception = excr

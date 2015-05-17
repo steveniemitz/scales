@@ -6,6 +6,7 @@ from gevent.event import AsyncResult, Event
 from gevent.queue import Queue
 
 from scales.message import (
+  OneWaySendCompleteMessage,
   SystemErrorMessage,
   TimeoutMessage,
   Timeout,
@@ -242,7 +243,7 @@ class ThriftMuxSocketTransportSink(ClientFormatterSink):
                 *self._EncodeTag(tag))
 
   def AsyncProcessRequest(self, sink_stack, msg, stream):
-    if not sink_stack.is_one_way:
+    if True:
       tag = self._tag_pool.get()
       msg.properties[Tag.KEY] = tag
       self._tag_map[tag] = sink_stack
@@ -293,8 +294,9 @@ class ThrfitMuxMessageSerializerSink(ClientFormatterSink):
     sink_stack = ClientChannelSinkStack(reply_sink)
     sink_stack.Push(self, ctx)
     self.next_sink.AsyncProcessRequest(sink_stack, msg, fpb)
+    # The call is one way, so ignore the response.
     if one_way_reply_sink:
-      one_way_reply_sink.ProcessReturnMessage()
+      one_way_reply_sink.ProcessReturnMessage(OneWaySendCompleteMessage())
 
   def AsyncProcessRequest(self, sink_stack, msg, stream):
     raise Exception("Not supported")

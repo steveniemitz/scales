@@ -2,9 +2,10 @@ from gevent.event import AsyncResult
 
 from scales.message import (
   Deadline,
-  SystemErrorMessage,
+  OneWaySendCompleteMessage,
   RdispatchMessage,
   RerrorMessage,
+  SystemErrorMessage,
   TdispatchMessage,
   Timeout,
   TimeoutMessage,)
@@ -34,6 +35,8 @@ class GeventMessageTerminatorSink(ReplySink):
         'and has been aborted.'))
     elif isinstance(msg, SystemErrorMessage):
       self._ar.set_exception(msg.error)
+    elif isinstance(msg, OneWaySendCompleteMessage):
+      self._ar.set(None)
     else:
       self._ar.set_exception(InternalError('Unknown response message of type %s' % msg.__class__))
 
@@ -56,7 +59,7 @@ class MessageDispatcher(object):
     self._client_stack_builder = client_stack_builder
     self._dispatch_timeout = dispatch_timeout
 
-  def DispatchMethodCall(self, service, method, args, timeout=None):
+  def DispatchMethodCall(self, service, method, args, kwargs, timeout=None):
     """Creates and posts a Tdispatch message to a client sink stack.
 
     Args:
@@ -76,7 +79,7 @@ class MessageDispatcher(object):
     if timeout:
       ctx['com.twitter.finagle.Deadline'] = Deadline(timeout)
 
-    disp_msg = TdispatchMessage(service, method, args, ctx)
+    disp_msg = TdispatchMessage(service, method, args, kwargs, ctx)
     disp_msg.properties[Timeout.KEY] = timeout
 
     message_sink = self._client_stack_builder.CreateSinkStack()
