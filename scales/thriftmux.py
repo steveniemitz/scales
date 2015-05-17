@@ -5,10 +5,16 @@ import types
 from thrift.transport import TTransport
 from thrift.transport import TSocket
 
-from scales import thriftmuxsink
+from scales.tmux.sink import (
+    ThrfitMuxMessageSerializerSink,
+    ThriftMuxSocketTransportSink,
+    TimeoutSink
+)
+
 from scales.core import Scales
 from scales.pool import RoundRobinPoolMemberSelector
 from scales.varzsocketwrapper import VarzSocketWrapper
+
 
 _MUXERS = {}
 class ThriftMuxSocketTransportSinkProvider(object):
@@ -26,7 +32,7 @@ class ThriftMuxSocketTransportSinkProvider(object):
     else:
       sock = self._CreateSocket(server.host, server.port)
       healthy_sock = VarzSocketWrapper(sock, pool_name)
-      sink = thriftmuxsink.ThriftMuxSocketTransportSink(healthy_sock)
+      sink = ThriftMuxSocketTransportSink(healthy_sock)
       cbs = set()
       _MUXERS[key] = (sink, cbs)
 
@@ -44,8 +50,8 @@ class ThriftMuxMessageSinkProvider(object):
   @staticmethod
   def CreateMessageSinks():
     return [
-      thriftmuxsink.TimeoutSink(),
-      thriftmuxsink.ThrfitMuxMessageSerializerSink()
+      TimeoutSink(),
+      ThrfitMuxMessageSerializerSink()
     ]
 
 

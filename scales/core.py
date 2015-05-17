@@ -6,7 +6,7 @@ from scales.pool import (
   SingletonPool,
   StaticServerSetProvider)
 
-from scales.sink import PoolMemberSelectorTransportSink
+from scales.sink import PooledTransportSink
 
 class Scales(object):
   """Factory for scales thrift services.
@@ -41,7 +41,7 @@ class Scales(object):
       def CreateSinkStack(self):
         message_stack = self._message_sink_provider.CreateMessageSinks()
         transport_stack = [
-          PoolMemberSelectorTransportSink(self._pool)
+          PooledTransportSink(self._pool)
         ]
         sink_stack = message_stack + transport_stack
         for s in range(0, len(sink_stack) - 1):

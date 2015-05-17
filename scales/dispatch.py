@@ -8,33 +8,34 @@ from scales.message import (
   TdispatchMessage,
   Timeout,
   TimeoutMessage,)
-from scales.sink import SyncMessageSink
+from scales.sink import ReplySink
 
-class ServerException(Exception):  pass
-class TimeoutException(Exception): pass
-class ShutdownException(Exception): pass
+class InternalError(Exception): pass
+class ServerError(Exception):  pass
+class TimeoutError(Exception): pass
+class ShutdownError(Exception): pass
 
-class GeventMessageTerminatorSink(SyncMessageSink):
+class GeventMessageTerminatorSink(ReplySink):
   def __init__(self):
     super(GeventMessageTerminatorSink, self).__init__()
     self._ar = AsyncResult()
 
-  def SyncProcessMessage(self, msg):
+  def ProcessReturnMessage(self, msg):
     if isinstance(msg, RdispatchMessage):
-      if msg.error:
-        self._ar.set_exception(ServerException(msg.error))
+      if msg.error_message:
+        self._ar.set_exception(ServerError(msg.error_message))
       else:
         self._ar.set(msg.response)
     elif isinstance(msg, RerrorMessage):
-      self._ar.set_exception(msg.error)
+      self._ar.set_exception(msg.error_message)
     elif isinstance(msg, TimeoutMessage):
-      self._ar.set_exception(TimeoutException(
+      self._ar.set_exception(TimeoutError(
         'The call did not complete within the specified timeout '
         'and has been aborted.'))
     elif isinstance(msg, SystemErrorMessage):
-      self._ar.set_exception(msg.exception)
+      self._ar.set_exception(msg.error)
     else:
-      self._ar.set_exception(SystemErrorMessage('Unknown response message'))
+      self._ar.set_exception(InternalError('Unknown response message of type %s' % msg.__class__))
 
   @property
   def async_result(self):

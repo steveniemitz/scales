@@ -16,11 +16,11 @@ class MessageSink(object):
     self._next = value
 
 
-class SyncMessageSink(MessageSink):
+class ReplySink(MessageSink):
   def __init__(self):
-    super(SyncMessageSink, self).__init__()
+    super(ReplySink, self).__init__()
 
-  def SyncProcessMessage(self, msg):
+  def ProcessReturnMessage(self, msg):
     raise NotImplementedError()
 
 
@@ -70,15 +70,15 @@ class ClientChannelSinkStack(SinkStack):
 
   def DispatchReplyMessage(self, msg):
     if self._reply_sink:
-      self._reply_sink.SyncProcessMessage(msg)
+      self._reply_sink.ProcessReturnMessage(msg)
 
   @property
   def is_one_way(self):
     return self._reply_sink is None
 
-class PoolMemberSelectorTransportSink(ClientChannelSink):
+class PooledTransportSink(ClientChannelSink):
   def __init__(self, pool):
-    super(PoolMemberSelectorTransportSink, self).__init__()
+    super(PooledTransportSink, self).__init__()
     self._pool = pool
 
   def AsyncProcessRequestCallback(self, sink_stack, msg, stream):

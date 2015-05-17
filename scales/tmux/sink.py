@@ -1,5 +1,3 @@
-import traceback
-
 from struct import (pack, unpack)
 from cStringIO import StringIO
 
@@ -8,19 +6,23 @@ from gevent.event import AsyncResult, Event
 from gevent.queue import Queue
 
 from scales.message import (
-  MessageSerializer,
-  MessageType,
   SystemErrorMessage,
-  TdiscardedMessage,
   TimeoutMessage,
   Timeout,
-  Tag)
+  MessageType,
+  TdiscardedMessage,
+)
+
+from scales.tmux.formatter import (
+  MessageSerializer,
+  Tag
+)
 
 from scales.sink import (
   AsyncMessageSink,
   ClientChannelSinkStack,
   ClientFormatterSink,
-  SyncMessageSink,
+  ReplySink,
 )
 
 from scales.ttypes import DispatcherState
@@ -281,10 +283,18 @@ class ThrfitMuxMessageSerializerSink(ClientFormatterSink):
 
   def AsyncProcessMessage(self, msg, reply_sink):
     fpb = StringIO()
-    ctx = msg.Marshal(fpb)
+    is_one_way, ctx = self._serializer.Marshal(msg, fpb)
+
+    if is_one_way:
+      one_way_reply_sink, reply_sink = reply_sink, None
+    else:
+      one_way_reply_sink = None
+
     sink_stack = ClientChannelSinkStack(reply_sink)
     sink_stack.Push(self, ctx)
     self.next_sink.AsyncProcessRequest(sink_stack, msg, fpb)
+    if one_way_reply_sink:
+      one_way_reply_sink.ProcessReturnMessage()
 
   def AsyncProcessRequest(self, sink_stack, msg, stream):
     raise Exception("Not supported")
@@ -295,11 +305,10 @@ class ThrfitMuxMessageSerializerSink(ClientFormatterSink):
       msg = self._serializer.Unmarshal(tag, msg_type, stream, context)
     except Exception as ex:
       msg = SystemErrorMessage(ex)
-
     sink_stack.DispatchReplyMessage(msg)
 
 
-class TimeoutReplySink(SyncMessageSink):
+class TimeoutReplySink(ReplySink):
   def __init__(self, client_sink, msg, next_sink, timeout):
     super(TimeoutReplySink, self).__init__()
     self.next_sink = next_sink
@@ -308,10 +317,10 @@ class TimeoutReplySink(SyncMessageSink):
     self._client_sink = client_sink
     gevent.spawn(self._TimeoutHelper, timeout)
 
-  def SyncProcessMessage(self, msg):
+  def ProcessReturnMessage(self, msg):
     self._call_done.set()
     if self.next_sink:
-      self.next_sink.SyncProcessMessage(msg)
+      self.next_sink.ProcessReturnMessage(msg)
 
   def _TimeoutHelper(self, timeout):
     """Waits for ar to be signaled or [timeout] seconds to elapse.  If the
@@ -322,7 +331,7 @@ class TimeoutReplySink(SyncMessageSink):
     if not self._call_done.is_set() and self.next_sink:
       error_msg = TimeoutMessage()
       reply_sink, self.next_sink = self.next_sink, None
-      reply_sink.SyncProcessMessage(error_msg)
+      reply_sink.ProcessReturnMessage(error_msg)
 
       tag = self._msg.properties.get(Tag.KEY)
       if tag:
