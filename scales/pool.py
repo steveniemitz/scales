@@ -1,7 +1,4 @@
-"""A socket pool that is backed by service discovery running on Aurora.
-
-Internally, Aurora uses Zookeeper for registering services.
-"""
+"""A pool that tracks a set of resources as well as their health."""
 
 import collections
 from contextlib import contextmanager
@@ -15,12 +12,31 @@ import gevent
 LOG = logging.getLogger("scales.SingletonPool")
 
 class ServerSetProvider(object):
+  """Base class for providing a set of servers, as well as optionally
+  notifying the pool of servers joining and leaving the set."""
+
   def GetServers(self, on_join, on_leave):
+    """Get all the current servers in the set.
+
+    Args:
+      on_join - A function to be called when a server joins the set.
+      on_leave - A function to be called when a server leaves the set.
+
+    Returns:
+      An iterable of servers.
+    """
     raise NotImplementedError()
 
 
 class StaticServerSetProvider(ServerSetProvider):
+  """A ServerSetProvider that returns a static set of servers."""
+
   def __init__(self, servers):
+    """Initializes the set with a static list of servers.
+
+    Args:
+      servers - An iterable of servers.
+    """
     self._servers = servers
 
   def GetServers(self, on_join, on_leave):
@@ -35,23 +51,41 @@ def ScheduleOperationWithPeriodWorker(period, operation):
 def ScheduleOperationWithPeriod(period, operation):
   gevent.spawn(ScheduleOperationWithPeriodWorker, period, operation)
 
-class AcquirePoolMemeberException(Exception): pass
+class AcquirePoolMemeberException(Exception):
+  """An exception raised when all members of the pool have failed."""
+  pass
 
 class PoolMemberSelector(object):
+  """Base class for selecting a pool member from a set of healthy servers.
+  PoolMemberSelectors are notified when healthy servers join or leave the pool.
+  """
+
   def GetNextMember(self):
+    """Get the next member to use from the pool.
+
+    Returns:
+      A server from the healthy set.
+    """
     raise NotImplementedError()
 
   def OnHealthyMembersChanged(self, all_healthy_servers):
+    """Called by the pool when the set of healthy servers changes.
+
+    Args:
+      all_healthy_servers - An iterable of all currently healthy servers.
+    """
     pass
 
 class RoundRobinPoolMemberSelector(PoolMemberSelector):
+  """PoolMemberSelector that cycles through all healthy members in order."""
+
   def __init__(self):
     self._next_server = None
 
   def OnHealthyMembersChanged(self, all_healthy_servers):
-    healhy_servers = list(all_healthy_servers)
-    random.shuffle(healhy_servers)
-    self._next_server = itertools.cycle(healhy_servers)
+    healthy_servers = list(all_healthy_servers)
+    random.shuffle(healthy_servers)
+    self._next_server = itertools.cycle(healthy_servers)
 
   def GetNextMember(self):
     try:
@@ -72,7 +106,7 @@ class SingletonPool(object):
       initial_size_min_members=0,
       initial_size_factor=0,
       shareable_resources=False):
-    """Initializes the resource pool.
+    """Initializes the pool.
 
     Args:
       pool_name - The name of this pool to be used in logging.
@@ -85,7 +119,7 @@ class SingletonPool(object):
           - isOpen()
           - close()
 
-        IsConnectionFault: Must take an excpetion an return true if that
+        IsConnectionFault: Must take an exception an return true if that
           exception was caused by the connection failing.
       member_selector - An instance of a PoolMemberSelector.
       initial_size_min_members - The absolute minimum number of connections in
@@ -237,7 +271,7 @@ class SingletonPool(object):
 
         # Check if the socket is healthy by running a non-blocking select on it.
         if not socket.testConnection():
-          LOG.error("Checking connection failed for shard %s, marking unhealhy"
+          LOG.error("Checking connection failed for shard %s, marking unhealthy"
                     % str(shard))
           self._HealthCallback(shard)
         else:

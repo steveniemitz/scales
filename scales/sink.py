@@ -59,6 +59,11 @@ class SinkStack(object):
     return self._stack.pop()
 
 
+class ClientMessageSinkStackBuilder(object):
+  def CreateMessageSinks(self):
+    raise NotImplementedError()
+
+
 class ClientChannelSinkStack(SinkStack):
   def __init__(self, reply_sink):
     super(ClientChannelSinkStack, self).__init__()

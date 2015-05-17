@@ -13,19 +13,16 @@ from scales.message import (
   MessageType,
   TdiscardedMessage,
 )
-
 from scales.tmux.formatter import (
   MessageSerializer,
   Tag
 )
-
 from scales.sink import (
   AsyncMessageSink,
   ClientChannelSinkStack,
   ClientFormatterSink,
   ReplySink,
 )
-
 from scales.ttypes import DispatcherState
 
 class TagPool(object):

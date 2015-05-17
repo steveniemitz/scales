@@ -1,18 +1,17 @@
+"""Scales core module."""
+
 import collections
 
 from scales.dispatch import MessageDispatcher
-
 from scales.pool import (
   SingletonPool,
   StaticServerSetProvider)
-
 from scales.sink import PooledTransportSink
 
 class Scales(object):
-  """Factory for scales thrift services.
-  """
+  """Factory for scales proxies."""
 
-  class _ServiceBuilder(object):
+  class _ClientBuilder(object):
     Endpoint = collections.namedtuple('Endpoint', 'host port')
     Server = collections.namedtuple('Server', 'service_endpoint')
     _POOLS = {}
@@ -135,5 +134,13 @@ class Scales(object):
       return proxy_cls(dispatcher)
 
   @staticmethod
-  def newBuilder(Client):
-    return Scales._ServiceBuilder(Client)
+  def newBuilder(Iface):
+    """Creates a new client builder for a given interface.
+    All methods on the interface will be proxied into the Scales dispatcher.
+
+    Args:
+      Iface - The interface to proxy.
+    Returns:
+      A client builder for the interface.
+    """
+    return Scales._ClientBuilder(Iface)
