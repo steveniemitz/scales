@@ -1,33 +1,46 @@
 from __future__ import absolute_import
 
-import collections
+import functools
 
 from thrift.transport import TTransport
 
-VARZ_DATA = collections.defaultdict(int)
-_VARZ_PREFIX = 'scales'
+from scales.varz import VarzReceiver
 
 class VarzSocketWrapper(TTransport.TTransportBase):
-  def __init__(self, socket, varz_tag):
-    self._InitVarz(varz_tag)
+  class Varz(object):
+    def __init__(self, service_tag, transport_tag):
+      def inc_all(metric, amount):
+        VarzReceiver.IncrementVarz(service_tag, metric, amount)
+        VarzReceiver.IncrementVarz(transport_tag, metric, amount)
+      base_tag = 'scales.socket.%s'
+      self.bytes_recv = functools.partial(
+          inc_all, base_tag % 'bytes_recv')
+      self.bytes_sent = functools.partial(
+          inc_all, base_tag % 'bytes_sent')
+      self.num_connections = functools.partial(
+          inc_all, base_tag % 'num_connections')
+      self.tests_failed = functools.partial(
+          inc_all, base_tag % 'tests_failed', 1)
+
+  def __init__(self, socket, varz_tag, test_connections=False):
     self._socket = socket
+    self._test_connections = False
+    self._varz = self.Varz(varz_tag, '%s.%d' % (self.host, self.port))
 
-  def _InitVarz(self, varz_tag):
-    make_tag = lambda metric: '_'.join([_VARZ_PREFIX, varz_tag, metric])
-    self._varz_bytes_recv = make_tag('bytes_recv')
-    self._varz_bytes_sent = make_tag('bytes_sent')
-    self._varz_connections = make_tag('num_connections')
+  @property
+  def host(self):
+    return self._socket.host
 
-  @staticmethod
-  def _IncrementVarz(metric, amount):
-    VARZ_DATA[metric] += amount
+  @property
+  def port(self):
+    return self._socket.port
 
   def isOpen(self):
     return self._socket.isOpen()
 
   def read(self, sz):
     buff = self._socket.read(sz)
-    self._IncrementVarz(self._varz_bytes_recv, len(buff))
+    self._varz.bytes_recv(len(buff))
     return buff
 
   def flush(self):
@@ -35,21 +48,25 @@ class VarzSocketWrapper(TTransport.TTransportBase):
 
   def write(self, buff):
     self._socket.write(buff)
-    self._IncrementVarz(self._varz_bytes_sent, len(buff))
+    self._varz.bytes_sent(len(buff))
 
   def open(self):
     self._socket.open()
-    self._IncrementVarz(self._varz_connections, 1)
+    self._varz.num_connections(1)
 
   def close(self):
-    self._IncrementVarz(self._varz_connections, -1)
+    self._varz.num_connections(-1)
     self._socket.close()
 
   def testConnection(self):
+    if not self._test_connections:
+      return True
+
     from gevent.select import select as gselect
     import select
     try:
       reads, _, _ = gselect([self._socket.handle], [], [], 0)
       return True
     except select.error:
+      self._varz.tests_failed()
       return False
