@@ -101,18 +101,17 @@ class SingletonPool(object):
         underlying resources are safe to share.
     """
     self._shareable_resources = shareable_resources
-    self._initialized = False
     self._connection_provider = connection_provider
-    self._pool_name = pool_name
     self._member_selector = member_selector
+    self._pool_name = pool_name
     LOG.info("Creating SingletonPool for %s" % pool_name)
-    self.server_set = server_set_provider.GetServers(
+    self._server_set = server_set_provider.GetServers(
       on_join=self._OnServerSetJoin,
       on_leave=self._OnServerSetLeave)
 
     from gevent.event import Event
     self._init_done = Event()
-    self._servers = set(m.service_endpoint for m in self.server_set)
+    self._servers = set(m.service_endpoint for m in self._server_set)
     self._healthy_servers = self._servers.copy()
     self._socket_queue = collections.deque()
     self._OnHealthyServersChanged()

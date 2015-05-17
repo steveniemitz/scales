@@ -131,7 +131,8 @@ class Scales(object):
           self._timeout)
 
       self._built = True
-      return self._service_provider.CreateServiceClient(self._client, dispatcher)
+      proxy_cls = self._service_provider.CreateServiceClient(self._client)
+      return proxy_cls(dispatcher)
 
   @staticmethod
   def newBuilder(Client):

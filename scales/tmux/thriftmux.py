@@ -56,38 +56,52 @@ class ThriftMuxMessageSinkProvider(object):
 
 
 class ThriftServiceProvider(object):
+  _PROXY_CACHE = {}
+
   @staticmethod
-  def CreateServiceClient(Iface, dispatcher):
+  def _BuildServiceProxy(Iface, proxy_name):
+    def ProxyMethod(method_name, orig_method, async=False):
+      @functools.wraps(orig_method)
+      def _ProxyMethod(self, *args, **kwargs):
+        ar = self._dispatcher.DispatchMethodCall(Iface, method_name, args, kwargs)
+        return ar if async else ar.get()
+      return _ProxyMethod
+
+    def _ProxyInit(self, dispatcher):
+      self._dispatcher = dispatcher
+
+    is_thrift_method = lambda m: inspect.ismethod(m) and not inspect.isbuiltin(m)
+
+    # Get all methods defined on the interface.
+    iface_methods = { m[0]: ProxyMethod(*m)
+                      for m in inspect.getmembers(Iface, is_thrift_method) }
+
+    iface_methods.update({ m[0] + "_async": ProxyMethod(*m, async=True)
+                           for m in inspect.getmembers(Iface, is_thrift_method) })
+    iface_methods.update({ '__init__': _ProxyInit })
+
+    # Create a proxy class to intercept the thrift methods.
+    proxy = type(
+      proxy_name,
+      (Iface, object),
+      iface_methods)
+    return proxy
+
+  @staticmethod
+  def CreateServiceClient(Iface):
     """Creates a proxy class that takes all method on Client
     and sends them to a dispatcher.
 
     Args:
-      Client - A class object implementing one or more thrift interfaces.
+      Iface - A class object implementing one or more thrift interfaces.
       dispatcher - An instance of a MessageDispatcher.
     """
-
-    def ProxyMethod(method_name, orig_method, async=False):
-      @functools.wraps(orig_method)
-      def _ProxyMethod(self, *args, **kwargs):
-        ar = dispatcher.DispatchMethodCall(Iface, method_name, args, kwargs)
-        return ar if async else ar.get()
-      return types.MethodType(_ProxyMethod, Iface)
-
-    # Find the thrift interface on the client
-    is_thrift_method = lambda m: inspect.ismethod(m) and not inspect.isbuiltin(m)
-
-    # Then get the methods on the client that it implemented from the interface
-    iface_methods = { m[0]: ProxyMethod(*m)
-                      for m in inspect.getmembers(Iface, is_thrift_method) }
-    iface_methods.update({ m[0] + "_async": ProxyMethod(*m, async=True)
-                         for m in inspect.getmembers(Iface, is_thrift_method) })
-
-    # Create a proxy class to intercept the thrift methods.
-    proxy = type(
-      '_ScalesTransparentProxy<%s>' % Iface.__module__,
-      (Iface, object),
-      iface_methods)
-    return proxy
+    proxy_name = '_ScalesTransparentProxy<%s>' % Iface.__module__
+    proxy_cls = ThriftServiceProvider._PROXY_CACHE.get(proxy_name, None)
+    if not proxy_cls:
+      proxy_cls = ThriftServiceProvider._BuildServiceProxy(Iface, proxy_name)
+      ThriftServiceProvider._PROXY_CACHE[proxy_name] = proxy_cls
+    return proxy_cls
 
 
 class ThriftMux(object):
