@@ -95,13 +95,13 @@ class MessageSerializer(object):
     MessageSerializer._SerializeThriftCall(msg, buf)
     # It's odd, but even "oneway" thrift messages get a response
     # with finagle, so we need to allocate a tag and track them still.
-    return False, (msg._service, msg._method)
+    return (msg._service, msg._method)
 
   @staticmethod
   def _Marshal_Tdiscarded(msg, buf):
     buf.write(pack('!BBB', *Tag(msg._which).Encode()))
     buf.write(msg._reason)
-    return True, None
+    return (None,)
 
   @staticmethod
   def _WriteContext(ctx, buf):

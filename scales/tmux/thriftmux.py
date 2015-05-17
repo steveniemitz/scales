@@ -32,7 +32,7 @@ class ThriftMuxSocketTransportSinkProvider(object):
     else:
       sock = self._CreateSocket(server.host, server.port)
       healthy_sock = VarzSocketWrapper(sock, pool_name)
-      sink = ThriftMuxSocketTransportSink(healthy_sock)
+      sink = ThriftMuxSocketTransportSink(healthy_sock, pool_name)
       cbs = set()
       _MUXERS[key] = (sink, cbs)
 
@@ -48,10 +48,10 @@ class ThriftMuxSocketTransportSinkProvider(object):
 
 class ThriftMuxMessageSinkProvider(object):
   @staticmethod
-  def CreateMessageSinks():
+  def CreateMessageSinks(varz_source):
     return [
       TimeoutSink(),
-      ThrfitMuxMessageSerializerSink()
+      ThrfitMuxMessageSerializerSink(varz_source)
     ]
 
 
@@ -113,7 +113,7 @@ class ThriftMux(object):
       .setMessageSinkProvider(ThriftMuxMessageSinkProvider()) \
       .setTransportSinkProvider(ThriftMuxSocketTransportSinkProvider()) \
       .setUri(uri) \
-      .setTimeout(.5) \
+      .setTimeout(5) \
       .setServiceProvider(ThriftServiceProvider())
 
   @staticmethod
