@@ -7,7 +7,7 @@ from gevent.queue import Queue
 
 from scales.message import (
   OneWaySendCompleteMessage,
-  SystemErrorMessage,
+  ScalesErrorMessage,
   TimeoutMessage,
   Timeout,
   MessageType,
@@ -131,7 +131,7 @@ class ThriftMuxSocketTransportSink(ClientFormatterSink):
     if not isinstance(reason, Exception):
       reason = Exception(str(reason))
     self._shutdown_ar.set_exception(reason)
-    msg = SystemErrorMessage(reason)
+    msg = ScalesErrorMessage(reason)
 
     for sink_stack in self._tag_map.values():
       sink_stack.DispatchReplyMessage(msg)
@@ -303,7 +303,7 @@ class ThrfitMuxMessageSerializerSink(ClientFormatterSink):
       msg_type, tag = ThrfitMuxMessageSerializerSink.ReadHeader(stream)
       msg = self._serializer.Unmarshal(tag, msg_type, stream, context)
     except Exception as ex:
-      msg = SystemErrorMessage(ex)
+      msg = ScalesErrorMessage(ex)
     sink_stack.DispatchReplyMessage(msg)
 
 

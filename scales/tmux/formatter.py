@@ -11,7 +11,8 @@ from thrift.Thrift import (
 
 from scales.message import (
   RdispatchMessage,
-  RerrorMessage
+  RerrorMessage,
+  Deadline
 )
 from scales.ttypes import MessageType
 
@@ -110,8 +111,11 @@ class MessageSerializer(object):
         raise NotImplementedError("Unsupported key type in context")
       k_len = len(k)
       buf.write(pack('!h%ds' % k_len, k_len, k))
-      buf.write(pack('!h', len(v)))
-      v.Marshal(buf)
+      if isinstance(v, Deadline):
+        buf.write(pack('!h', 16))
+        buf.write(pack('!qq', v._ts, v._timeout))
+      else:
+        raise NotImplementedError("Unsupported value type in context.")
 
   @staticmethod
   def _ReadContext(buf):

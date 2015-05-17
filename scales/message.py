@@ -1,23 +1,13 @@
 """Base classes for Message processing."""
 
 import traceback
-from struct import (pack)
 
-from ttypes import (Enum, MessageType)
-
-class Marshallable(object):
-  def Marshal(self, buf):
-    raise NotImplementedError()
-
-  @classmethod
-  def Unmarshal(cls, buf, ctx):
-    raise NotImplementedError()
-
+from scales.ttypes import (Enum, MessageType)
 
 class Timeout(object):
   KEY = "__Timeout"
 
-class Deadline(Marshallable):
+class Deadline(object):
   def __init__(self, timeout):
     """
     Args:
@@ -26,12 +16,6 @@ class Deadline(Marshallable):
     import  time
     self._ts = long(time.time()) * 1000000000 # Nanoseconds
     self._timeout = long(timeout * 1000000000)
-
-  def __len__(self):
-    return 16
-
-  def Marshal(self, buf):
-    buf.write(pack('!qq', self._ts, self._timeout))
 
 
 class Message(object):
@@ -181,7 +165,7 @@ class OneWaySendCompleteMessage(SystemMessage):
   """A message returned after a one way message has been successfully sent."""
   pass
 
-class SystemErrorMessage(SystemMessage):
+class ScalesErrorMessage(SystemMessage):
   """A message representing an internal error while processing a message."""
   def __init__(self, excr):
     self._exception = excr

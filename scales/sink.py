@@ -1,5 +1,5 @@
 from collections import deque
-from scales.message import SystemErrorMessage
+from scales.message import ScalesErrorMessage
 import gevent
 
 class MessageSink(object):
@@ -90,7 +90,7 @@ class PooledTransportSink(ClientChannelSink):
     try:
       shard, sink = self._pool.Get()
     except Exception as e:
-      excr = SystemErrorMessage(e)
+      excr = ScalesErrorMessage(e)
       sink_stack.DispatchReplyMessage(excr)
       return
 

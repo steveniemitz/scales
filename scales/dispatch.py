@@ -7,16 +7,15 @@ from scales.message import (
   OneWaySendCompleteMessage,
   RdispatchMessage,
   RerrorMessage,
-  SystemErrorMessage,
+  ScalesErrorMessage,
   TdispatchMessage,
   Timeout,
   TimeoutMessage,)
 from scales.sink import ReplySink
 
 class InternalError(Exception): pass
-class ServerError(Exception):  pass
+class ScalesError(Exception):  pass
 class TimeoutError(Exception): pass
-class ShutdownError(Exception): pass
 
 class GeventMessageTerminatorSink(ReplySink):
   """A ReplySink that converts a Message into an AsyncResult.
@@ -25,6 +24,21 @@ class GeventMessageTerminatorSink(ReplySink):
   def __init__(self):
     super(GeventMessageTerminatorSink, self).__init__()
     self._ar = AsyncResult()
+
+  @staticmethod
+  def _MakeServerException(system_msg):
+    """Creates an exception object that contains the inner exception
+    from a SystemErrorMessage.  This allows the actual failure stack
+    to propegate to the waiting greenlet.
+    """
+    if system_msg.stack:
+      msg = """An error occured while processing the request:
+[Inner Exception: --------------------]
+%s[End of Inner Exception---------------]
+""" % system_msg.stack
+      return ScalesError(msg)
+    else:
+      return system_msg.error
 
   def ProcessReturnMessage(self, msg):
     """Convert a Message into an AsyncResult.
@@ -35,7 +49,7 @@ class GeventMessageTerminatorSink(ReplySink):
     """
     if isinstance(msg, RdispatchMessage):
       if msg.error_message:
-        self._ar.set_exception(ServerError(msg.error_message))
+        self._ar.set_exception(ScalesError(msg.error_message))
       else:
         self._ar.set(msg.response)
     elif isinstance(msg, RerrorMessage):
@@ -44,8 +58,8 @@ class GeventMessageTerminatorSink(ReplySink):
       self._ar.set_exception(TimeoutError(
         'The call did not complete within the specified timeout '
         'and has been aborted.'))
-    elif isinstance(msg, SystemErrorMessage):
-      self._ar.set_exception(msg.error)
+    elif isinstance(msg, ScalesErrorMessage):
+      self._ar.set_exception(self._MakeServerException(msg))
     elif isinstance(msg, OneWaySendCompleteMessage):
       self._ar.set(None)
     else:
