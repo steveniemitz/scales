@@ -161,12 +161,10 @@ class SocketTransportSink(ClientFormatterSink):
     return self._state == DispatcherState.RUNNING
 
   def testConnection(self):
-    if not self._state == DispatcherState.RUNNING:
-      return False
-    if hasattr(self._socket, 'testConnection'):
-      return self._socket.testConnection()
-    else:
-      return True
+    # No need to actually test anything here,
+    # the send and recv loops will detect connection failures
+    # almost instantly.
+    return self.isOpen()
 
   def _Shutdown(self, reason):
     if not self.isActive:

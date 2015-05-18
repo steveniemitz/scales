@@ -2,9 +2,10 @@ from __future__ import print_function
 
 import logging
 import random
-from gevent import monkey
+import traceback
 
 import gevent
+from gevent import monkey
 from gevent.event import Event
 
 from scales.thriftmux import ThriftMux
@@ -26,7 +27,6 @@ if __name__ == '__main__':
         try:
           client.hi('test')
         except:
-          import traceback
           traceback.print_exc()
         gevent.sleep(random.random() / 10)
 

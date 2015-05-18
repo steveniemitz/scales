@@ -110,6 +110,7 @@ class SingletonPool(object):
       self.num_healhy_servers = functools.partial(base_set, base_var % 'num_healhy_servers')
       self.num_unhealhy_servers = functools.partial(base_set, base_var % 'num_unhealhy_servers')
       self.resources_created = functools.partial(base_inc, base_var % 'resources_created', 1)
+      self.all_members_failed = functools.partial(base_inc, base_var % 'all_members_failed', 1)
 
   def __init__(
       self,
@@ -302,7 +303,7 @@ class SingletonPool(object):
           return shard, socket
       except AcquirePoolMemeberException:
         self.LOG.error("All nodes failed for pool.")
-        self._increment_varz(metric='scales.SingletonPool.')
+        self._varz.all_members_failed()
         raise
       except Exception as ex:
         last_exception = traceback.format_exc()
@@ -310,7 +311,7 @@ class SingletonPool(object):
           raise
         else:
           # Mark the server unhealthy as we were unable to connect to it.
-          LOG.error("Unable to initialize pool member %s for pool." %
+          self.LOG.error("Unable to initialize pool member %s for pool." %
               str(shard))
           self._HealthCallback(shard)
 
