@@ -1,17 +1,15 @@
 """Core classes for dispatching messages from a Scales proxy to a message sink stack."""
 
 import functools
+import traceback
 
 from gevent.event import AsyncResult
 
 from scales.message import (
-  OneWaySendCompleteMessage,
-  RdispatchMessage,
-  RerrorMessage,
-  ScalesErrorMessage,
-  TdispatchMessage,
-  Timeout,
-  TimeoutMessage,)
+  MethodCallMessage,
+  MethodReturnMessage,
+  Timeout
+)
 from scales.sink import ReplySink
 from scales.varz import VarzReceiver
 
@@ -29,19 +27,20 @@ class GeventMessageTerminatorSink(ReplySink):
     self._source = source
 
   @staticmethod
-  def _MakeServerException(system_msg):
+  def _MakeServerException(msg):
     """Creates an exception object that contains the inner exception
     from a SystemErrorMessage.  This allows the actual failure stack
     to propegate to the waiting greenlet.
     """
-    if system_msg.stack:
-      msg = """An error occured while processing the request:
+    stack = getattr(msg, 'stack', None)
+    if stack:
+      msg = """An error occured while processing the request
 [Inner Exception: --------------------]
 %s[End of Inner Exception---------------]
-""" % system_msg.stack
+""" % ''.join(stack)
       return ScalesError(msg)
     else:
-      return system_msg.error
+      return msg.error
 
   def ProcessReturnMessage(self, msg):
     """Convert a Message into an AsyncResult.
@@ -51,21 +50,11 @@ class GeventMessageTerminatorSink(ReplySink):
       msg - The reply message.
     """
     MessageDispatcher.Varz.response_messages(self._source)
-    if isinstance(msg, RdispatchMessage):
-      if msg.error_message:
-        self._ar.set_exception(ScalesError(msg.error_message))
+    if isinstance(msg, MethodReturnMessage):
+      if msg.error:
+        self._ar.set_exception(self._MakeServerException(msg))
       else:
-        self._ar.set(msg.response)
-    elif isinstance(msg, RerrorMessage):
-      self._ar.set_exception(msg.error_message)
-    elif isinstance(msg, TimeoutMessage):
-      self._ar.set_exception(TimeoutError(
-        'The call did not complete within the specified timeout '
-        'and has been aborted.'))
-    elif isinstance(msg, ScalesErrorMessage):
-      self._ar.set_exception(self._MakeServerException(msg))
-    elif isinstance(msg, OneWaySendCompleteMessage):
-      self._ar.set(None)
+        self._ar.set(msg.return_value)
     else:
       self._ar.set_exception(InternalError('Unknown response message of type %s' % msg.__class__))
 
@@ -117,7 +106,7 @@ class MessageDispatcher(object):
       or after [timeout] seconds elapse.
     """
     timeout = timeout or self._dispatch_timeout
-    disp_msg = TdispatchMessage(self._service, method, args, kwargs)
+    disp_msg = MethodCallMessage(self._service, method, args, kwargs)
     disp_msg.properties[Timeout.KEY] = timeout
 
     message_sink = self._client_stack_builder.CreateSinkStack()
