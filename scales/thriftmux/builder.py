@@ -62,7 +62,7 @@ class ThriftMux(object):
       .setMessageSinkProvider(ThriftMux.MessageSinkProvider()) \
       .setTransportSinkProvider(ThriftMux.SocketTransportSinkProvider()) \
       .setUri(uri) \
-      .setTimeout(.5)
+      .setTimeout(5)
 
   @staticmethod
   def newClient(Iface, uri):

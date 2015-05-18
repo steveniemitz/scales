@@ -14,7 +14,6 @@ from scales.message import (
   MethodDiscardMessage,
   MethodReturnMessage,
   ScalesClientError,
-  ServerError,
   Timeout,
   TimeoutError,
 )
@@ -25,8 +24,6 @@ from scales.thriftmux.formatter import (
 from scales.thriftmux.protocol import (
   Headers,
   MessageType,
-  RdispatchMessage,
-  RerrorMessage,
 )
 from scales.sink import (
   AsyncMessageSink,

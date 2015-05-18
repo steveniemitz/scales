@@ -7,7 +7,8 @@ import inspect
 from scales.dispatch import MessageDispatcher
 from scales.pool import (
   SingletonPool,
-  StaticServerSetProvider)
+  StaticServerSetProvider,
+  ZooKeeperServerSetProvider)
 from scales.sink import PooledTransportSink
 
 
@@ -138,7 +139,9 @@ class Scales(object):
     def setUri(self, uri):
       self._uri = uri
       if self._uri.startswith('zk://'):
-        self._server_set_provider = None
+        uri = uri[5:]
+        hosts, path = uri.split('/', 1)
+        self._server_set_provider = ZooKeeperServerSetProvider(hosts, path)
       elif self._uri.startswith('tcp://'):
         uri = self._uri[6:]
         servers = uri.split(',')
