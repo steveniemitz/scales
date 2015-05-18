@@ -4,7 +4,7 @@ import functools
 
 from thrift.transport import TTransport
 
-from scales.varz import VarzReceiver
+from .varz import VarzReceiver
 
 class VarzSocketWrapper(TTransport.TTransportBase):
   class Varz(object):

@@ -8,7 +8,7 @@ import gevent
 from gevent.event import AsyncResult, Event
 from gevent.queue import Queue
 
-from scales.message import (
+from ..message import (
   Deadline,
   MethodCallMessage,
   MethodDiscardMessage,
@@ -17,22 +17,22 @@ from scales.message import (
   Timeout,
   TimeoutError,
 )
-from scales.thriftmux.formatter import (
-  MessageSerializer,
-  Tag
-)
-from scales.thriftmux.protocol import (
-  Headers,
-  MessageType,
-)
-from scales.sink import (
+from ..sink import (
   AsyncMessageSink,
   ClientChannelSinkStack,
   ClientFormatterSink,
   ReplySink,
 )
-from scales.constants import DispatcherState
-from scales.varz import VarzReceiver
+from ..constants import DispatcherState
+from ..varz import VarzReceiver
+from .formatter import (
+  MessageSerializer,
+  Tag
+)
+from .protocol import (
+  Headers,
+  MessageType,
+)
 
 ROOT_LOG = logging.getLogger('scales.thriftmux')
 

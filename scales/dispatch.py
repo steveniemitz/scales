@@ -1,17 +1,16 @@
 """Core classes for dispatching messages from a Scales proxy to a message sink stack."""
 
 import functools
-import traceback
 
 from gevent.event import AsyncResult
 
-from scales.message import (
+from .message import (
   MethodCallMessage,
   MethodReturnMessage,
   Timeout
 )
-from scales.sink import ReplySink
-from scales.varz import VarzReceiver
+from .sink import ReplySink
+from .varz import VarzReceiver
 
 class InternalError(Exception): pass
 class ScalesError(Exception):  pass

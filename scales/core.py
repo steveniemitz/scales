@@ -4,12 +4,13 @@ import collections
 import functools
 import inspect
 
-from scales.dispatch import MessageDispatcher
-from scales.pool import (
+from .dispatch import MessageDispatcher
+from .pool import (
+  RoundRobinPoolMemberSelector,
   SingletonPool,
   StaticServerSetProvider,
   ZooKeeperServerSetProvider)
-from scales.sink import PooledTransportSink
+from .sink import PooledTransportSink
 
 
 class ClientProxyProvider(object):
@@ -85,7 +86,7 @@ class Scales(object):
       self._name = Iface.__module__
       self._uri = None
       self._zk_servers = None
-      self._selector = None
+      self._selector = RoundRobinPoolMemberSelector()
       self._timeout = 10
       self._initial_size_members = 0
       self._initial_size_pct = 0

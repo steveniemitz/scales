@@ -1,1 +1,1 @@
-from builder import ThriftMux
+from .builder import ThriftMux

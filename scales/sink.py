@@ -1,9 +1,12 @@
 from collections import deque
-from scales.message import (
+
+import gevent
+
+from .message import (
   MethodReturnMessage,
   ScalesClientError
 )
-import gevent
+
 
 class MessageSink(object):
   def __init__(self):
@@ -83,6 +86,7 @@ class ClientChannelSinkStack(SinkStack):
   @property
   def is_one_way(self):
     return self._reply_sink is None
+
 
 class PooledTransportSink(ClientChannelSink):
   def __init__(self, pool):

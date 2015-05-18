@@ -16,7 +16,7 @@ from contextlib import contextmanager
 import gevent
 from gevent.event import Event
 
-from scales.varz import VarzReceiver
+from ..varz import VarzReceiver
 
 ROOT_LOG = logging.getLogger("scales")
 
