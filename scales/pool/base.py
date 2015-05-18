@@ -1,24 +1,37 @@
 """A pool that tracks a set of resources as well as their health."""
 
 import collections
-from contextlib import contextmanager
 import itertools
 import functools
 import logging
 import random
 import traceback
 
+from abc import (
+  ABCMeta,
+  abstractmethod
+)
+from contextlib import contextmanager
+
 import gevent
+from gevent.event import Event
 
 from scales.varz import VarzReceiver
 
 ROOT_LOG = logging.getLogger("scales")
 
 class ServerSetProvider(object):
+  __metaclass__ = ABCMeta
+
   """Base class for providing a set of servers, as well as optionally
   notifying the pool of servers joining and leaving the set."""
 
-  def GetServers(self, on_join, on_leave):
+  @abstractmethod
+  def Initialize(self, on_join, on_leave):
+    raise NotImplementedError()
+
+  @abstractmethod
+  def GetServers(self):
     """Get all the current servers in the set.
 
     Args:
@@ -42,8 +55,35 @@ class StaticServerSetProvider(ServerSetProvider):
     """
     self._servers = servers
 
-  def GetServers(self, on_join, on_leave):
+  def Initialize(self, on_join, on_leave):
+    pass
+
+  def GetServers(self):
     return self._servers
+
+
+class ZooKeeperServerSetProvider(ServerSetProvider):
+  from .zookeeper import ServerSet
+  from kazoo.client import KazooClient
+  from kazoo.handlers.gevent import SequentialGeventHandler
+
+  def __init__(self, zk_servers, zk_path, zk_timeout=30):
+    self._zk_client = self.KazooClient(
+        hosts=zk_servers,
+        timeout=zk_timeout,
+        handler=self.SequentialGeventHandler(),
+        randomize_hosts=True)
+    self._zk_path = zk_path
+    self._zk_live = self._zk_client.start_async()
+    self._server_set = None
+
+  def Initialize(self, on_join, on_leave):
+    self._zk_live.wait()
+    self._server_set = self.ServerSet(
+        self._zk_client, self._zk_path, on_join, on_leave)
+
+  def GetServers(self):
+    return self._server_set.get_members()
 
 
 class AcquirePoolMemeberException(Exception):
@@ -144,6 +184,7 @@ class SingletonPool(object):
         and instead are returned to the tail.  This should be used if the
         underlying resources are safe to share.
     """
+    self._init_done = Event()
     self._shareable_resources = shareable_resources
     self._connection_provider = connection_provider
     self._member_selector = member_selector
@@ -151,12 +192,10 @@ class SingletonPool(object):
     self._varz = self.Varz(pool_name)
     self.LOG = self.POOL_LOGGER.getChild('[%s]' % pool_name)
     self.LOG.info("Creating SingletonPool")
-    self._server_set = server_set_provider.GetServers(
-      on_join=self._OnServerSetJoin,
-      on_leave=self._OnServerSetLeave)
-
-    from gevent.event import Event
-    self._init_done = Event()
+    server_set_provider.Initialize(
+        self._OnServerSetJoin,
+        self._OnServerSetLeave)
+    self._server_set = server_set_provider.GetServers()
     self._servers = set(m.service_endpoint for m in self._server_set)
     self._healthy_servers = self._servers.copy()
     self._socket_queue = collections.deque()
