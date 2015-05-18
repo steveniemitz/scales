@@ -19,6 +19,7 @@ from ..message import (
 )
 from ..sink import (
   AsyncMessageSink,
+  ClientChannelSink,
   ClientChannelSinkStack,
   ClientFormatterSink,
   ReplySink,
@@ -88,7 +89,7 @@ class TagPool(object):
     self._set.add(tag)
 
 
-class SocketTransportSink(ClientFormatterSink):
+class SocketTransportSink(ClientChannelSink):
   SINK_LOG = ROOT_LOG.getChild('SocketTransportSink')
 
   class Varz(object):
