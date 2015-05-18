@@ -10,11 +10,18 @@ from thrift.Thrift import (
 )
 
 from scales.message import (
-  RdispatchMessage,
-  RerrorMessage,
+  MethodCallMessage,
+  MethodDiscardMessage,
+  MethodReturnMessage,
+  ServerError,
   Deadline
 )
-from scales.constants import MessageType
+from scales.thriftmux.protocol import (
+  Headers,
+  RdispatchMessage,
+  RerrorMessage,
+  MessageType
+)
 
 class Tag(object):
   KEY = "__Tag"
@@ -31,9 +38,8 @@ class Tag(object):
 class MessageSerializer(object):
   def __init__(self):
     self._marshal_map = {
-      MessageType.Tdispatch: self._Marshal_Tdispatch,
-      MessageType.Tdiscarded: self._Marshal_Tdiscarded,
-      MessageType.BAD_Tdiscarded: self._Marshal_Tdiscarded,
+      MethodCallMessage: self._Marshal_Tdispatch,
+      MethodDiscardMessage: self._Marshal_Tdiscarded,
     }
     self._unmarshal_map = {
       MessageType.Rdispatch: self._Unmarshal_Rdispatch,
@@ -46,12 +52,12 @@ class MessageSerializer(object):
     tbuf = TMemoryBuffer()
     tbuf._buffer = buf
     prot = TBinaryProtocolAccelerated(tbuf, True, True)
-    service, method, args, kwargs = msg._service, msg._method, msg._args, msg._kwargs
+    service, method, args, kwargs = msg.service, msg.method, msg.args, msg.kwargs
     service_module = sys.modules[service.__module__]
     is_one_way = not hasattr(service_module, '%s_result' % method)
     args_cls = getattr(service_module, '%s_args' % method)
 
-    prot.writeMessageBegin(msg._method, TMessageType.ONEWAY if is_one_way else TMessageType.CALL, 0)
+    prot.writeMessageBegin(msg.method, TMessageType.ONEWAY if is_one_way else TMessageType.CALL, 0)
     thrift_args = args_cls(*args, **kwargs)
     thrift_args.write(prot)
     prot.writeMessageEnd()
@@ -84,24 +90,33 @@ class MessageSerializer(object):
       return None
     if getattr(result, 'success', None) is not None:
       return result.success
-    if getattr(result, 'unavailable', None) is not None:
-      return result.unavailable
-    return TApplicationException(TApplicationException.MISSING_RESULT, "%s failed: unknown result" % method)
+
+    result_spec = getattr(result_cls, 'thrift_spec', None)
+    if result_spec:
+      exceptions = result_spec[1:]
+      for e in exceptions:
+        attr_val = getattr(result, e[2], None)
+        if attr_val is not None:
+          return attr_val
+
+      return TApplicationException(TApplicationException.MISSING_RESULT, "%s failed: unknown result" % method)
 
   @staticmethod
-  def _Marshal_Tdispatch(msg, buf):
-    MessageSerializer._WriteContext(msg._ctx, buf)
+  def _Marshal_Tdispatch(msg, buf, headers):
+    headers[Headers.MessageType] = MessageType.Tdispatch
+    MessageSerializer._WriteContext(msg.public_properties, buf)
     buf.write(pack('!hh', 0, 0)) # len(dst), len(dtab), both unsupported
     MessageSerializer._SerializeThriftCall(msg, buf)
     # It's odd, but even "oneway" thrift messages get a response
     # with finagle, so we need to allocate a tag and track them still.
-    return (msg._service, msg._method)
+    return msg.service, msg.method
 
   @staticmethod
-  def _Marshal_Tdiscarded(msg, buf):
-    buf.write(pack('!BBB', *Tag(msg._which).Encode()))
-    buf.write(msg._reason)
-    return (None,)
+  def _Marshal_Tdiscarded(msg, buf, headers):
+    headers[Headers.MessageType] = MessageType.Tdiscarded
+    buf.write(pack('!BBB', *Tag(msg.which.properties[Tag.KEY]).Encode()))
+    buf.write(msg.reason)
+    return None,
 
   @staticmethod
   def _WriteContext(ctx, buf):
@@ -133,18 +148,18 @@ class MessageSerializer(object):
       response = MessageSerializer._DeserializeThriftCall(buf, ctx)
       buf.close()
       if isinstance(response, Exception):
-        return RdispatchMessage(err=response)
+        return MethodReturnMessage(error=response)
       else:
-        return RdispatchMessage(response)
+        return MethodReturnMessage(response)
     elif status == RdispatchMessage.Rstatus.NACK:
-      return RdispatchMessage(err='The server returned a NACK')
+      return MethodReturnMessage(error=ServerError('The server returned a NACK'))
     else:
-      return RdispatchMessage(err=buf.read())
+      return MethodReturnMessage(error=ServerError(buf.read()))
 
   @staticmethod
   def _Unmarshal_Rerror(buf, ctx):
     why = buf.read()
-    return RerrorMessage(why)
+    return MethodReturnMessage(error=ServerError(why))
 
   def Unmarshal(self, tag, msg_type, data, ctx):
     msg_type_cls = self._unmarshal_map[msg_type]
@@ -155,8 +170,8 @@ class MessageSerializer(object):
     msg.tag = tag
     return msg
 
-  def Marshal(self, msg, buf):
-    marshaller = self._marshal_map[msg.type]
-    return marshaller(msg, buf)
+  def Marshal(self, msg, buf, headers):
+    marshaller = self._marshal_map[msg.__class__]
+    return marshaller(msg, buf, headers)
 
 

@@ -10,17 +10,23 @@ from gevent.queue import Queue
 
 from scales.message import (
   Deadline,
-  OneWaySendCompleteMessage,
-  ScalesErrorMessage,
-  TimeoutMessage,
+  MethodCallMessage,
+  MethodDiscardMessage,
+  MethodReturnMessage,
+  ScalesClientError,
+  ServerError,
   Timeout,
-  MessageType,
-  TdispatchMessage,
-  TdiscardedMessage,
+  TimeoutError,
 )
 from scales.thriftmux.formatter import (
   MessageSerializer,
   Tag
+)
+from scales.thriftmux.protocol import (
+  Headers,
+  MessageType,
+  RdispatchMessage,
+  RerrorMessage,
 )
 from scales.sink import (
   AsyncMessageSink,
@@ -177,7 +183,7 @@ class SocketTransportSink(ClientFormatterSink):
     if not isinstance(reason, Exception):
       reason = Exception(str(reason))
     self._shutdown_ar.set_exception(reason)
-    msg = ScalesErrorMessage(reason)
+    msg = MethodReturnMessage(error=ScalesClientError(reason))
 
     for sink_stack in self._tag_map.values():
       sink_stack.DispatchReplyMessage(msg)
@@ -253,7 +259,7 @@ class SocketTransportSink(ClientFormatterSink):
   def _ProcessReply(self, stream):
     try:
       msg_type, tag = ThrfitMuxMessageSerializerSink.ReadHeader(stream)
-      if tag == 1: #Ping
+      if tag == 1 and msg_type == MessageType.Rping: #Ping
         self._OnPingResponse(msg_type, stream)
       elif tag != 0:
         reply_stack = self._ReleaseTag(tag)
@@ -291,7 +297,7 @@ class SocketTransportSink(ClientFormatterSink):
                 msg_type,
                 *self._EncodeTag(tag))
 
-  def AsyncProcessRequest(self, sink_stack, msg, stream):
+  def AsyncProcessRequest(self, sink_stack, msg, stream, headers):
     if not msg.is_one_way:
       tag = self._tag_pool.get()
       msg.properties[Tag.KEY] = tag
@@ -300,7 +306,7 @@ class SocketTransportSink(ClientFormatterSink):
       tag = 0
 
     data_len = stream.tell()
-    header = self._BuildHeader(tag, msg.type, data_len)
+    header = self._BuildHeader(tag, headers[Headers.MessageType], data_len)
     payload = header + stream.getvalue()
     self._send_queue.put(payload)
 
@@ -309,7 +315,6 @@ class SocketTransportSink(ClientFormatterSink):
 
 
 class ThrfitMuxMessageSerializerSink(ClientFormatterSink):
-
   class Varz(object):
     def __init__(self, source):
       base_tag = 'scales.thriftmux.ThrfitMuxMessageSerializerSink.%s'
@@ -324,8 +329,6 @@ class ThrfitMuxMessageSerializerSink(ClientFormatterSink):
     self._reply_sink = None
     self._varz = self.Varz(varz_source)
 
-  """Serialize a ThriftMux Message to a stream
-  """
   @staticmethod
   def ReadHeader(stream):
     """Read a mux header off a message.
@@ -343,11 +346,12 @@ class ThrfitMuxMessageSerializerSink(ClientFormatterSink):
 
   def AsyncProcessMessage(self, msg, reply_sink):
     fpb = StringIO()
+    headers = {}
     try:
-      ctx = self._serializer.Marshal(msg, fpb)
+      ctx = self._serializer.Marshal(msg, fpb, headers)
     except Exception as ex:
       self._varz.ser_failure()
-      msg = ScalesErrorMessage(ex)
+      msg = MethodReturnMessage(error=ex)
       reply_sink.ProcessReturnMessage(msg)
       return
 
@@ -358,12 +362,12 @@ class ThrfitMuxMessageSerializerSink(ClientFormatterSink):
 
     sink_stack = ClientChannelSinkStack(reply_sink)
     sink_stack.Push(self, ctx)
-    self.next_sink.AsyncProcessRequest(sink_stack, msg, fpb)
+    self.next_sink.AsyncProcessRequest(sink_stack, msg, fpb, headers)
     # The call is one way, so ignore the response.
     if one_way_reply_sink:
-      one_way_reply_sink.ProcessReturnMessage(OneWaySendCompleteMessage())
+      one_way_reply_sink.ProcessReturnMessage(MethodReturnMessage())
 
-  def AsyncProcessRequest(self, sink_stack, msg, stream):
+  def AsyncProcessRequest(self, sink_stack, msg, stream, headers):
     raise Exception("Not supported")
 
   def AsyncProcessResponse(self, sink_stack, context, stream):
@@ -372,7 +376,7 @@ class ThrfitMuxMessageSerializerSink(ClientFormatterSink):
       msg = self._serializer.Unmarshal(tag, msg_type, stream, context)
     except Exception as ex:
       self._varz.deser_failure()
-      msg = ScalesErrorMessage(ex)
+      msg = MethodReturnMessage(error=ex)
     sink_stack.DispatchReplyMessage(msg)
 
 
@@ -402,13 +406,13 @@ class TimeoutReplySink(ReplySink):
     self._call_done.wait(timeout)
     if not self._call_done.is_set() and self.next_sink:
       self._varz.timeout()
-      error_msg = TimeoutMessage()
+      error_msg = MethodReturnMessage(error=TimeoutError())
       reply_sink, self.next_sink = self.next_sink, None
       reply_sink.ProcessReturnMessage(error_msg)
 
       tag = self._msg.properties.get(Tag.KEY)
       if tag:
-        msg = TdiscardedMessage(tag, 'Client Timeout')
+        msg = MethodDiscardMessage(self._msg, 'Client Timeout')
         self._client_sink.AsyncProcessMessage(msg, None)
 
 
@@ -431,8 +435,8 @@ class TimeoutSink(AsyncMessageSink):
       tag - The tag of the request.
     """
     timeout = msg.properties.get(Timeout.KEY)
-    if timeout and isinstance(msg, TdispatchMessage):
-      msg.context['com.twitter.finagle.Deadline'] = Deadline(timeout)
+    if timeout and isinstance(msg, MethodCallMessage):
+      msg.properties['com.twitter.finagle.Deadline'] = Deadline(timeout)
       reply_sink = TimeoutReplySink(self, msg, reply_sink, timeout, self._varz)
     return self.next_sink.AsyncProcessMessage(msg, reply_sink)
 

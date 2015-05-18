@@ -1,18 +1,4 @@
-class Enum(object):
-  pass
-
-class MessageType(Enum):
-  Tdispatch = 2
-  Rdispatch = -2
-  Rerr = -128
-  BAD_Rerr = 127
-
-  Tping = 65
-  Rping = -65
-
-  Tdiscarded = 66
-  BAD_Tdiscarded = -62
-
+class Enum(object): pass
 
 class DispatcherState(Enum):
   UNINITIALIZED = 0

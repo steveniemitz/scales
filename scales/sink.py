@@ -1,5 +1,8 @@
 from collections import deque
-from scales.message import ScalesErrorMessage
+from scales.message import (
+  MethodReturnMessage,
+  ScalesClientError
+)
 import gevent
 
 class MessageSink(object):
@@ -36,7 +39,7 @@ class ClientChannelSink(object):
   def __init__(self):
     super(ClientChannelSink, self).__init__()
 
-  def AsyncProcessRequest(self, sink_stack, msg, stream):
+  def AsyncProcessRequest(self, sink_stack, msg, stream, headers):
     raise NotImplementedError()
 
   def AsyncProcessResponse(self, sink_stack, context, stream):
@@ -86,19 +89,19 @@ class PooledTransportSink(ClientChannelSink):
     super(PooledTransportSink, self).__init__()
     self._pool = pool
 
-  def AsyncProcessRequestCallback(self, sink_stack, msg, stream):
+  def AsyncProcessRequestCallback(self, sink_stack, msg, stream, headers):
     try:
       shard, sink = self._pool.Get()
     except Exception as e:
-      excr = ScalesErrorMessage(e)
+      excr = MethodReturnMessage(error=ScalesClientError(e))
       sink_stack.DispatchReplyMessage(excr)
       return
 
     sink_stack.Push(self, (shard, sink))
-    return sink.AsyncProcessRequest(sink_stack, msg, stream)
+    return sink.AsyncProcessRequest(sink_stack, msg, stream, headers)
 
-  def AsyncProcessRequest(self, sink_stack, msg, stream):
-    gevent.spawn(self.AsyncProcessRequestCallback, sink_stack, msg, stream)
+  def AsyncProcessRequest(self, sink_stack, msg, stream, headers):
+    gevent.spawn(self.AsyncProcessRequestCallback, sink_stack, msg, stream, headers)
 
   def AsyncProcessResponse(self, sink_stack, context, stream):
     self._pool.Return(*context)
