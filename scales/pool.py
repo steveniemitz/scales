@@ -46,17 +46,10 @@ class StaticServerSetProvider(ServerSetProvider):
     return self._servers
 
 
-def ScheduleOperationWithPeriodWorker(period, operation):
-  while True:
-    gevent.sleep(period)
-    operation()
-
-def ScheduleOperationWithPeriod(period, operation):
-  gevent.spawn(ScheduleOperationWithPeriodWorker, period, operation)
-
 class AcquirePoolMemeberException(Exception):
   """An exception raised when all members of the pool have failed."""
   pass
+
 
 class PoolMemberSelector(object):
   """Base class for selecting a pool member from a set of healthy servers.
@@ -78,6 +71,7 @@ class PoolMemberSelector(object):
       all_healthy_servers - An iterable of all currently healthy servers.
     """
     pass
+
 
 class RoundRobinPoolMemberSelector(PoolMemberSelector):
   """PoolMemberSelector that cycles through all healthy members in order."""
@@ -133,6 +127,7 @@ class SingletonPool(object):
           - open()
           - isOpen()
           - close()
+          - testConnection()
 
         IsConnectionFault: Must take an exception an return true if that
           exception was caused by the connection failing.
@@ -167,8 +162,18 @@ class SingletonPool(object):
     self._socket_queue = collections.deque()
     self._OnHealthyServersChanged()
     self._init_done.set()
-    ScheduleOperationWithPeriod(10, self._Reset)
+    self.ScheduleOperationWithPeriod(10, self._Reset)
     self._PrepopulatePool(initial_size_min_members, initial_size_factor)
+
+  @staticmethod
+  def ScheduleOperationWithPeriodWorker(period, operation):
+    while True:
+      gevent.sleep(period)
+      operation()
+
+  @staticmethod
+  def ScheduleOperationWithPeriod(period, operation):
+    gevent.spawn(SingletonPool.ScheduleOperationWithPeriodWorker, period, operation)
 
   def _PrepopulatePool(self, initial_size_min_members, initial_size_factor):
     """Pre-populate the connection pool at startup.  See ctor for parameters.

@@ -11,7 +11,12 @@ from scales.pool import RoundRobinPoolMemberSelector
 from scales.varzsocketwrapper import VarzSocketWrapper
 
 class ThriftMux(object):
+  """A builder class for building clients to ThriftMux services.
+  """
+
   class SocketTransportSinkProvider(object):
+    """"""
+
     _MUXERS = {}
     @staticmethod
     def AreTransportsSharable():

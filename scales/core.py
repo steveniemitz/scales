@@ -15,11 +15,22 @@ class ClientProxyProvider(object):
   _PROXY_CACHE = {}
 
   @staticmethod
-  def _BuildServiceProxy(Iface, proxy_name):
+  def _GetProxyName(Iface):
+    return '_ScalesTransparentProxy<%s>' % Iface.__module__
+
+  @staticmethod
+  def _BuildServiceProxy(Iface):
+    """Build a proxy class that intercepts all user methods on [Iface]
+    and routes them to a message dispatcher.
+
+    Args:
+      Iface - An interface to proxy
+    """
+
     def ProxyMethod(method_name, orig_method, async=False):
       @functools.wraps(orig_method)
       def _ProxyMethod(self, *args, **kwargs):
-        ar = self._dispatcher.DispatchMethodCall(Iface, method_name, args, kwargs)
+        ar = self._dispatcher.DispatchMethodCall(method_name, args, kwargs)
         return ar if async else ar.get()
       return _ProxyMethod
 
@@ -38,7 +49,7 @@ class ClientProxyProvider(object):
 
     # Create a proxy class to intercept the interface's methods.
     proxy = type(
-      proxy_name,
+      ClientProxyProvider._GetProxyName(Iface),
       (Iface, object),
       iface_methods)
     return proxy
@@ -52,26 +63,25 @@ class ClientProxyProvider(object):
       Iface - A class object implementing one or more thrift interfaces.
       dispatcher - An instance of a MessageDispatcher.
     """
-    proxy_name = '_ScalesTransparentProxy<%s>' % Iface.__module__
-    proxy_cls = ClientProxyProvider._PROXY_CACHE.get(proxy_name, None)
+    proxy_cls = ClientProxyProvider._PROXY_CACHE.get(Iface, None)
     if not proxy_cls:
-      proxy_cls = ClientProxyProvider._BuildServiceProxy(Iface, proxy_name)
-      ClientProxyProvider._PROXY_CACHE[proxy_name] = proxy_cls
+      proxy_cls = ClientProxyProvider._BuildServiceProxy(Iface)
+      ClientProxyProvider._PROXY_CACHE[Iface] = proxy_cls
     return proxy_cls
 
 
 class Scales(object):
-  """Factory for scales proxies."""
+  """Factory for scales clients."""
 
-  class _ClientBuilder(object):
+  class ClientBuilder(object):
     Endpoint = collections.namedtuple('Endpoint', 'host port')
     Server = collections.namedtuple('Server', 'service_endpoint')
     _POOLS = {}
 
-    def __init__(self, Client):
+    def __init__(self, Iface):
       self._built = False
-      self._client = Client
-      self._name = Client.__module__
+      self._service = Iface
+      self._name = Iface.__module__
       self._uri = None
       self._zk_servers = None
       self._selector = None
@@ -103,6 +113,7 @@ class Scales(object):
     def _CreatePoolKey(self):
       return (
         self._name,
+        self._uri,
         self._server_set_provider.__class__,
         self._transport_sink_provider.__class__,
         self._selector.__class__,
@@ -179,11 +190,12 @@ class Scales(object):
         self._BuildPool()
 
       dispatcher = MessageDispatcher(
+          self._service,
           self.ScalesSinkStackBuilder(self._pool, self._name, self._message_sink_provider),
           self._timeout)
 
       self._built = True
-      proxy_cls = self._client_provider.CreateServiceClient(self._client)
+      proxy_cls = self._client_provider.CreateServiceClient(self._service)
       return proxy_cls(dispatcher)
 
   @staticmethod
@@ -196,4 +208,4 @@ class Scales(object):
     Returns:
       A client builder for the interface.
     """
-    return Scales._ClientBuilder(Iface)
+    return Scales.ClientBuilder(Iface)

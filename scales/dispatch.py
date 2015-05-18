@@ -5,7 +5,6 @@ import functools
 from gevent.event import AsyncResult
 
 from scales.message import (
-  Deadline,
   OneWaySendCompleteMessage,
   RdispatchMessage,
   RerrorMessage,
@@ -88,17 +87,20 @@ class MessageDispatcher(object):
 
   def __init__(
         self,
+        service,
         client_stack_builder,
         dispatch_timeout=10):
     """
     Args:
+      service - The service interface class this dispatcher is serving.
       client_stack_builder - A ClientMessageSinkStackBuilder
       timeout - The default timeout in seconds for any dispatch messages.
     """
     self._client_stack_builder = client_stack_builder
     self._dispatch_timeout = dispatch_timeout
+    self._service = service
 
-  def DispatchMethodCall(self, service, method, args, kwargs, timeout=None):
+  def DispatchMethodCall(self, method, args, kwargs, timeout=None):
     """Creates and posts a Tdispatch message to a client sink stack.
 
     Args:
@@ -115,11 +117,11 @@ class MessageDispatcher(object):
       or after [timeout] seconds elapse.
     """
     timeout = timeout or self._dispatch_timeout
-    disp_msg = TdispatchMessage(service, method, args, kwargs)
+    disp_msg = TdispatchMessage(self._service, method, args, kwargs)
     disp_msg.properties[Timeout.KEY] = timeout
 
     message_sink = self._client_stack_builder.CreateSinkStack()
-    source = '%s.%s' % (service, method)
+    source = '%s.%s' % (self._service, method)
     ar_sink = GeventMessageTerminatorSink(source)
     self.Varz.dispatch_messages(source)
     message_sink.AsyncProcessMessage(disp_msg, ar_sink)
