@@ -21,6 +21,8 @@ class VarzSocketWrapper(TTransport.TTransportBase):
           inc_all, base_tag % 'num_connections')
       self.tests_failed = functools.partial(
           inc_all, base_tag % 'tests_failed', 1)
+      self.connects = functools.partial(
+          inc_all, base_tag % 'connects', 1)
 
   def __init__(self, socket, varz_tag, test_connections=False):
     self._socket = socket
@@ -52,6 +54,7 @@ class VarzSocketWrapper(TTransport.TTransportBase):
 
   def open(self):
     self._socket.open()
+    self._varz.connects()
     self._varz.num_connections(1)
 
   def close(self):
