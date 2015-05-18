@@ -9,17 +9,16 @@ from thrift.Thrift import (
   TMessageType
 )
 
-from scales.message import (
+from ..message import (
   MethodCallMessage,
   MethodDiscardMessage,
   MethodReturnMessage,
   ServerError,
   Deadline
 )
-from scales.thriftmux.protocol import (
+from .protocol import (
   Headers,
-  RdispatchMessage,
-  RerrorMessage,
+  Rstatus,
   MessageType
 )
 
@@ -144,14 +143,14 @@ class MessageSerializer(object):
     for n in range(0, nctx):
       MessageSerializer._ReadContext(buf)
 
-    if status == RdispatchMessage.Rstatus.OK:
+    if status == Rstatus.OK:
       response = MessageSerializer._DeserializeThriftCall(buf, ctx)
       buf.close()
       if isinstance(response, Exception):
         return MethodReturnMessage(error=response)
       else:
         return MethodReturnMessage(response)
-    elif status == RdispatchMessage.Rstatus.NACK:
+    elif status == Rstatus.NACK:
       return MethodReturnMessage(error=ServerError('The server returned a NACK'))
     else:
       return MethodReturnMessage(error=ServerError(buf.read()))

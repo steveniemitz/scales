@@ -1,14 +1,13 @@
 from thrift.transport import TTransport
 from thrift.transport import TSocket
 
-from scales.thriftmux.sink import (
+from .sink import (
     ThrfitMuxMessageSerializerSink,
     SocketTransportSink,
     TimeoutSink
 )
-from scales.core import Scales
-from scales.pool import RoundRobinPoolMemberSelector
-from scales.varzsocketwrapper import VarzSocketWrapper
+from ..core import Scales
+from ..varzsocketwrapper import VarzSocketWrapper
 
 class ThriftMux(object):
   """A builder class for building clients to ThriftMux services.
@@ -58,7 +57,6 @@ class ThriftMux(object):
   def configure(Iface, uri):
     return Scales \
       .newBuilder(Iface) \
-      .setPoolMemberSelector(RoundRobinPoolMemberSelector()) \
       .setMessageSinkProvider(ThriftMux.MessageSinkProvider()) \
       .setTransportSinkProvider(ThriftMux.SocketTransportSinkProvider()) \
       .setUri(uri) \

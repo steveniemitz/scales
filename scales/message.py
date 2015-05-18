@@ -25,6 +25,7 @@ class TimeoutError(Exception):
       'The call did not complete within the specified timeout '
       'and has been aborted.')
 
+
 class Message(object):
   def __init__(self):
     self._properties = None
