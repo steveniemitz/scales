@@ -9,14 +9,16 @@ from gevent.event import AsyncResult, Event
 from gevent.queue import Queue
 
 from scales.message import (
+  Deadline,
   OneWaySendCompleteMessage,
   ScalesErrorMessage,
   TimeoutMessage,
   Timeout,
   MessageType,
+  TdispatchMessage,
   TdiscardedMessage,
 )
-from scales.tmux.formatter import (
+from scales.thriftmux.formatter import (
   MessageSerializer,
   Tag
 )
@@ -26,12 +28,21 @@ from scales.sink import (
   ClientFormatterSink,
   ReplySink,
 )
-from scales.ttypes import DispatcherState
+from scales.constants import DispatcherState
 from scales.varz import VarzReceiver
 
+ROOT_LOG = logging.getLogger('scales.thriftmux')
+
 class TagPool(object):
-  POOL_EXHAUSTED_VARZ = 'scales.thriftmux.TagPool.pool_exhausted'
-  POOL_MAX_VARZ = 'scales.thriftmux.TagPool.max_tag'
+  POOL_LOGGER = ROOT_LOG.getChild('TagPool')
+
+  class Varz(object):
+    def __init__(self, source):
+      base_tag = 'scales.thriftmux.TagPool.%s'
+      self.pool_exhausted = functools.partial(
+          VarzReceiver.IncrementVarz, source, base_tag % 'pool_exhausted', 1)
+      self.max_tag = functools.partial(
+          VarzReceiver.SetVarz, source, base_tag % 'max_tag')
 
   """A class which manages a pool of tags
   """
@@ -39,9 +50,8 @@ class TagPool(object):
     self._set = set()
     self._next = 1
     self._max_tag = max_tag
-    self._varz_source = varz_source
-    self.LOG = logging.getLogger('scales.thriftmux.TagPool.%s' % varz_source)
-
+    self._varz = self.Varz(varz_source)
+    self.LOG = self.POOL_LOGGER.getChild('[%s]' % varz_source)
 
   def get(self):
     """Get a tag from the pool.
@@ -54,12 +64,12 @@ class TagPool(object):
     """
     if not any(self._set):
       if self._next == self._max_tag - 1:
-        VarzReceiver.IncrementVarz(self.POOL_EXHAUSTED_VARZ, self._varz_source, 1)
+        self._varz.pool_exhausted()
         raise Exception("No tags left in pool.")
       self._next += 1
       ret_tag = self._next
       self.LOG.debug('Allocating new tag, max is now %d' % ret_tag)
-      VarzReceiver.SetVarz(self.POOL_MAX_VARZ, self._varz_source, ret_tag)
+      self._varz.max_tag(ret_tag)
       return ret_tag
     else:
       return self._set.pop()
@@ -75,15 +85,21 @@ class TagPool(object):
     self._set.add(tag)
 
 
-class ThriftMuxSocketTransportSink(ClientFormatterSink):
-  BASE_TAG = 'scales.thriftmux.ThriftMuxSocketTransportSink'
-  SEND_TAG = BASE_TAG + '.messages_sent'
-  RECV_TAG = BASE_TAG + '.messages_recv'
-  ACTIVE_TAG = BASE_TAG + '.active'
-  TAG_FAILURES_TAG = BASE_TAG + '.tag_pool_exhausted'
+class SocketTransportSink(ClientFormatterSink):
+  SINK_LOG = ROOT_LOG.getChild('SocketTransportSink')
+
+  class Varz(object):
+    def __init__(self, socket_source, pool_source):
+      base_tag = 'scales.thriftmux.SocketTransportSink.%s'
+      def inc_base(metric, amount):
+        VarzReceiver.IncrementVarz(socket_source, metric, amount)
+        VarzReceiver.IncrementVarz(pool_source, metric, amount)
+      self.messages_sent = functools.partial(inc_base, base_tag % 'messages_sent', 1)
+      self.messages_recv = functools.partial(inc_base, base_tag % 'messages_recv', 1)
+      self.active = functools.partial(inc_base, base_tag % 'active')
 
   def __init__(self, socket, service):
-    super(ThriftMuxSocketTransportSink, self).__init__()
+    super(SocketTransportSink, self).__init__()
     self._tag_map = {}
     self._socket = socket
     self._send_queue = Queue()
@@ -94,20 +110,11 @@ class ThriftMuxSocketTransportSink(ClientFormatterSink):
     self._last_ping_start = 0
     self._state = DispatcherState.UNINITIALIZED
     self._open_result = None
-    self.LOG = logging.getLogger(
-      'scales.thriftmux.ThriftMuxSocketTransportSink [%s:%d]' % (
+    self.LOG = self.SINK_LOG.getChild('[%s:%d]' % (
         self._socket.host, self._socket.port))
-    self._varz_source = '%s.%d' % (self._socket.host, self._socket.port)
-    self._tag_pool = TagPool((2 ** 24) - 1, self._varz_source)
-
-    increment_transport_varz = functools.partial(
-        VarzReceiver.IncrementVarz, source=self._varz_source)
-    increment_service_varz = functools.partial(
-        VarzReceiver.IncrementVarz, source=service)
-    def _increment_varz(metric, amount=1):
-      increment_transport_varz(metric, amount=amount)
-      increment_service_varz(metric, amount=amount)
-    self._increment_varz = _increment_varz
+    varz_source = '%s.%d' % (self._socket.host, self._socket.port)
+    self._tag_pool = TagPool((2 ** 24) - 1, varz_source)
+    self._varz = self.Varz(varz_source, service)
 
   @property
   def shutdown_result(self):
@@ -141,7 +148,7 @@ class ThriftMuxSocketTransportSink(ClientFormatterSink):
       gevent.spawn(self._PingLoop)
       self._state = DispatcherState.RUNNING
       self._open_result.set()
-      self._increment_varz(self.ACTIVE_TAG)
+      self._varz.active(1)
     except Exception as e:
       self.LOG.error('Exception opening socket')
       self._open_result.set_exception(e)
@@ -166,7 +173,7 @@ class ThriftMuxSocketTransportSink(ClientFormatterSink):
       return
 
     self.LOG.warning('Shutting down transport [%s].' % str(reason))
-    self._increment_varz(self.ACTIVE_TAG, -1)
+    self._varz.active(-1)
     self._state = DispatcherState.STOPPED
     self._socket.close()
     if not isinstance(reason, Exception):
@@ -224,7 +231,7 @@ class ThriftMuxSocketTransportSink(ClientFormatterSink):
       try:
         payload = self._send_queue.get()
         self._socket.write(payload)
-        self._increment_varz(self.SEND_TAG)
+        self._varz.messages_sent()
       except Exception as e:
         self._Shutdown(e)
         break
@@ -239,7 +246,7 @@ class ThriftMuxSocketTransportSink(ClientFormatterSink):
       try:
         sz, = unpack('!i', self._socket.readAll(4))
         buf = StringIO(self._socket.readAll(sz))
-        self._increment_varz(self.RECV_TAG)
+        self._varz.messages_recv()
         gevent.spawn(self._ProcessReply, buf)
       except Exception as e:
         self._Shutdown(e)
@@ -304,9 +311,20 @@ class ThriftMuxSocketTransportSink(ClientFormatterSink):
 
 
 class ThrfitMuxMessageSerializerSink(ClientFormatterSink):
-  BASE_VARZ = 'scales.thriftmux.ThrfitMuxMessageSerializerSink'
-  DESERIALIZATION_FAILURES_VARZ = BASE_VARZ + '.deserialization_failures'
-  SERIALIZATION_FAILURES_VARZ = BASE_VARZ + '.serialization_failures'
+
+  class Varz(object):
+    def __init__(self, source):
+      base_tag = 'scales.thriftmux.ThrfitMuxMessageSerializerSink.%s'
+      self.deser_failure = functools.partial(
+          VarzReceiver.IncrementVarz, source, base_tag % 'deserialization_failures', 1)
+      self.ser_failure = functools.partial(
+        VarzReceiver.IncrementVarz, source, base_tag % 'serialization_failures', 1)
+
+  def __init__(self, varz_source):
+    super(ThrfitMuxMessageSerializerSink, self).__init__()
+    self._serializer = MessageSerializer()
+    self._reply_sink = None
+    self._varz = self.Varz(varz_source)
 
   """Serialize a ThriftMux Message to a stream
   """
@@ -325,20 +343,12 @@ class ThrfitMuxMessageSerializerSink(ClientFormatterSink):
     tag = ((header << 8) & 0xFFFFFFFF) >> 8
     return msg_type, tag
 
-  def __init__(self, varz_source):
-    super(ThrfitMuxMessageSerializerSink, self).__init__()
-    self._serializer = MessageSerializer()
-    self._reply_sink = None
-    self._varz_source = varz_source
-    self._increment_varz = functools.partial(
-        VarzReceiver.IncrementVarz, source=varz_source, amount=1)
-
   def AsyncProcessMessage(self, msg, reply_sink):
     fpb = StringIO()
     try:
       ctx = self._serializer.Marshal(msg, fpb)
     except Exception as ex:
-      self._increment_varz(self.SERIALIZATION_FAILURES_VARZ)
+      self._varz.ser_failure()
       msg = ScalesErrorMessage(ex)
       reply_sink.ProcessReturnMessage(msg)
       return
@@ -363,18 +373,22 @@ class ThrfitMuxMessageSerializerSink(ClientFormatterSink):
       msg_type, tag = ThrfitMuxMessageSerializerSink.ReadHeader(stream)
       msg = self._serializer.Unmarshal(tag, msg_type, stream, context)
     except Exception as ex:
-      self._increment_varz(self.DESERIALIZATION_FAILURES_VARZ)
+      self._varz.deser_failure()
       msg = ScalesErrorMessage(ex)
     sink_stack.DispatchReplyMessage(msg)
 
 
 class TimeoutReplySink(ReplySink):
-  def __init__(self, client_sink, msg, next_sink, timeout):
+  LOG = logging.getLogger("scales.thriftmux.TimeoutReplySink")
+
+  def __init__(self, client_sink, msg, next_sink, timeout, varz):
     super(TimeoutReplySink, self).__init__()
     self.next_sink = next_sink
     self._call_done = Event()
     self._msg = msg
     self._client_sink = client_sink
+    self._varz = varz
+
     gevent.spawn(self._TimeoutHelper, timeout)
 
   def ProcessReturnMessage(self, msg):
@@ -389,6 +403,7 @@ class TimeoutReplySink(ReplySink):
     """
     self._call_done.wait(timeout)
     if not self._call_done.is_set() and self.next_sink:
+      self._varz.timeout()
       error_msg = TimeoutMessage()
       reply_sink, self.next_sink = self.next_sink, None
       reply_sink.ProcessReturnMessage(error_msg)
@@ -400,9 +415,14 @@ class TimeoutReplySink(ReplySink):
 
 
 class TimeoutSink(AsyncMessageSink):
+  class Varz(object):
+    def __init__(self, source):
+      self.timeout = functools.partial(
+          VarzReceiver.IncrementVarz, source, 'scales.thriftmux.TimeoutSink.timeouts', 1)
+
   def __init__(self, varz_source):
     super(TimeoutSink, self).__init__()
-    self._varz_source = varz_source
+    self._varz = self.Varz(varz_source)
 
   def AsyncProcessMessage(self, msg, reply_sink):
     """Initialize the timeout handler for this request.
@@ -413,7 +433,8 @@ class TimeoutSink(AsyncMessageSink):
       tag - The tag of the request.
     """
     timeout = msg.properties.get(Timeout.KEY)
-    if timeout:
-      reply_sink = TimeoutReplySink(self, msg, reply_sink, timeout)
+    if timeout and isinstance(msg, TdispatchMessage):
+      msg.context['com.twitter.finagle.Deadline'] = Deadline(timeout)
+      reply_sink = TimeoutReplySink(self, msg, reply_sink, timeout, self._varz)
     return self.next_sink.AsyncProcessMessage(msg, reply_sink)
 

@@ -28,8 +28,8 @@ class VarzSocketWrapper(TTransport.TTransportBase):
     return self._socket.port
 
   def _IncrementVarz(self, metric, amount):
-    VarzReceiver.IncrementVarz(metric, self._service_source, amount)
-    VarzReceiver.IncrementVarz(metric, self._transport_source, amount)
+    VarzReceiver.IncrementVarz(self._service_source, metric, amount)
+    VarzReceiver.IncrementVarz(self._transport_source, metric, amount)
 
   def isOpen(self):
     return self._socket.isOpen()

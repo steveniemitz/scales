@@ -2,7 +2,7 @@
 
 import traceback
 
-from scales.ttypes import (Enum, MessageType)
+from scales.constants import (Enum, MessageType)
 
 class Timeout(object):
   KEY = "__Timeout"
@@ -78,6 +78,10 @@ class TdispatchMessage(Message):
     self._method = method
     self._args = args
     self._kwargs = kwargs
+
+  @property
+  def context(self):
+    return self._ctx
 
 
 class TpingMessage(Message):

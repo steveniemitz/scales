@@ -7,7 +7,7 @@ from gevent import monkey
 import gevent
 from gevent.event import Event
 
-from scales.tmux.thriftmux import ThriftMux
+from scales.thriftmux import ThriftMux
 from scales.varz import VarzReceiver
 
 monkey.patch_all(thread=False)
@@ -35,7 +35,7 @@ if __name__ == '__main__':
 
     e = Event()
     while True:
-      varz = VarzReceiver.GetAllVarz()
+      varz = VarzReceiver.VARZ_DATA
       for k in sorted(varz.keys()):
         print('%s = ' % str(k), end='')
         print(varz[k])

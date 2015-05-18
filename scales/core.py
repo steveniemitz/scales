@@ -1,12 +1,64 @@
 """Scales core module."""
 
 import collections
+import functools
+import inspect
 
 from scales.dispatch import MessageDispatcher
 from scales.pool import (
   SingletonPool,
   StaticServerSetProvider)
 from scales.sink import PooledTransportSink
+
+
+class ClientProxyProvider(object):
+  _PROXY_CACHE = {}
+
+  @staticmethod
+  def _BuildServiceProxy(Iface, proxy_name):
+    def ProxyMethod(method_name, orig_method, async=False):
+      @functools.wraps(orig_method)
+      def _ProxyMethod(self, *args, **kwargs):
+        ar = self._dispatcher.DispatchMethodCall(Iface, method_name, args, kwargs)
+        return ar if async else ar.get()
+      return _ProxyMethod
+
+    def _ProxyInit(self, dispatcher):
+      self._dispatcher = dispatcher
+
+    is_user_method = lambda m: inspect.ismethod(m) and not inspect.isbuiltin(m)
+
+    # Get all methods defined on the interface.
+    iface_methods = { m[0]: ProxyMethod(*m)
+                      for m in inspect.getmembers(Iface, is_user_method) }
+
+    iface_methods.update({ m[0] + "_async": ProxyMethod(*m, async=True)
+                           for m in inspect.getmembers(Iface, is_user_method) })
+    iface_methods.update({ '__init__': _ProxyInit })
+
+    # Create a proxy class to intercept the interface's methods.
+    proxy = type(
+      proxy_name,
+      (Iface, object),
+      iface_methods)
+    return proxy
+
+  @staticmethod
+  def CreateServiceClient(Iface):
+    """Creates a proxy class that takes all method on Client
+    and sends them to a dispatcher.
+
+    Args:
+      Iface - A class object implementing one or more thrift interfaces.
+      dispatcher - An instance of a MessageDispatcher.
+    """
+    proxy_name = '_ScalesTransparentProxy<%s>' % Iface.__module__
+    proxy_cls = ClientProxyProvider._PROXY_CACHE.get(proxy_name, None)
+    if not proxy_cls:
+      proxy_cls = ClientProxyProvider._BuildServiceProxy(Iface, proxy_name)
+      ClientProxyProvider._PROXY_CACHE[proxy_name] = proxy_cls
+    return proxy_cls
+
 
 class Scales(object):
   """Factory for scales proxies."""
@@ -30,15 +82,16 @@ class Scales(object):
       self._transport_sink_provider = None
       self._message_sink_provider = None
       self._pool = None
-      self._service_provider = None
+      self._client_provider = ClientProxyProvider()
 
     class ScalesSinkStackBuilder(object):
-      def __init__(self, pool, message_sink_provider):
+      def __init__(self, pool, name, message_sink_provider):
         self._pool = pool
+        self._name = name
         self._message_sink_provider = message_sink_provider
 
       def CreateSinkStack(self):
-        message_stack = self._message_sink_provider.CreateMessageSinks()
+        message_stack = self._message_sink_provider.CreateMessageSinks(self._name)
         transport_stack = [
           PooledTransportSink(self._pool)
         ]
@@ -117,8 +170,8 @@ class Scales(object):
       self._message_sink_provider = message_sink_provider
       return self
 
-    def setServiceProvider(self, service_provider):
-      self._service_provider = service_provider
+    def setClientProvider(self, client_provider):
+      self._client_provider = client_provider
       return self
 
     def build(self):
@@ -126,11 +179,11 @@ class Scales(object):
         self._BuildPool()
 
       dispatcher = MessageDispatcher(
-          self.ScalesSinkStackBuilder(self._pool, self._message_sink_provider),
+          self.ScalesSinkStackBuilder(self._pool, self._name, self._message_sink_provider),
           self._timeout)
 
       self._built = True
-      proxy_cls = self._service_provider.CreateServiceClient(self._client)
+      proxy_cls = self._client_provider.CreateServiceClient(self._client)
       return proxy_cls(dispatcher)
 
   @staticmethod

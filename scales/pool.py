@@ -3,13 +3,16 @@
 import collections
 from contextlib import contextmanager
 import itertools
+import functools
 import logging
 import random
 import traceback
 
 import gevent
 
-LOG = logging.getLogger("scales.SingletonPool")
+from scales.varz import VarzReceiver
+
+ROOT_LOG = logging.getLogger("scales")
 
 class ServerSetProvider(object):
   """Base class for providing a set of servers, as well as optionally
@@ -97,6 +100,17 @@ class RoundRobinPoolMemberSelector(PoolMemberSelector):
 class SingletonPool(object):
   """A pool of resources..
   """
+  POOL_LOGGER = ROOT_LOG.getChild('SingletonPool')
+  class Varz(object):
+    def __init__(self, source):
+      base_var = 'scales.SingletonPool.%s'
+      base_set = functools.partial(VarzReceiver.SetVarz, source)
+      base_inc = functools.partial(VarzReceiver.IncrementVarz, source)
+      self.num_servers = functools.partial(base_set, base_var % 'num_servers')
+      self.num_healhy_servers = functools.partial(base_set, base_var % 'num_healhy_servers')
+      self.num_unhealhy_servers = functools.partial(base_set, base_var % 'num_unhealhy_servers')
+      self.resources_created = functools.partial(base_inc, base_var % 'resources_created', 1)
+
   def __init__(
       self,
       pool_name,
@@ -138,7 +152,9 @@ class SingletonPool(object):
     self._connection_provider = connection_provider
     self._member_selector = member_selector
     self._pool_name = pool_name
-    LOG.info("Creating SingletonPool for %s" % pool_name)
+    self._varz = self.Varz(pool_name)
+    self.LOG = self.POOL_LOGGER.getChild('[%s]' % pool_name)
+    self.LOG.info("Creating SingletonPool")
     self._server_set = server_set_provider.GetServers(
       on_join=self._OnServerSetJoin,
       on_leave=self._OnServerSetLeave)
@@ -190,11 +206,18 @@ class SingletonPool(object):
   def _GetNextServer(self):
     member = self._member_selector.GetNextMember()
     if not member:
-      raise AcquirePoolMemeberException("No members were available for pool %s" %
-          self._pool_name)
+      raise AcquirePoolMemeberException("No members were available for pool")
     return member
 
+  def _UpdatePoolSizeVarz(self):
+    num_healthy_servers = len(self._healthy_servers)
+    num_servers = len(self._servers)
+    self._varz.num_healhy_servers(num_healthy_servers)
+    self._varz.num_servers(num_servers)
+    self._varz.num_unhealhy_servers(num_servers - num_healthy_servers)
+
   def _OnHealthyServersChanged(self):
+    self._UpdatePoolSizeVarz()
     self._member_selector.OnHealthyMembersChanged(self._healthy_servers)
 
   def _HealthCallback(self, shard):
@@ -221,7 +244,7 @@ class SingletonPool(object):
         self._OnHealthyServersChanged()
       except Exception as ex:
         if not self._connection_provider.IsConnectionFault(ex):
-          LOG.exception("Error checking health for server %s" % server)
+          self.LOG.exception("Error checking health for server %s" % server)
 
   def _CreateConnection(self, shard):
     """Calls the connection provider to create a new connection to a given
@@ -230,6 +253,7 @@ class SingletonPool(object):
     Returns:
       A new, unopened connection.
     """
+    self._varz.resources_created()
     return self._connection_provider.GetConnection(
       shard,
       self._pool_name,
@@ -267,17 +291,18 @@ class SingletonPool(object):
       try:
         if not socket.isOpen():
           socket.open()
-          LOG.info("Created socket for shard %s" % str(shard))
+          self.LOG.info("Opened socket for shard %s" % str(shard))
 
         # Check if the socket is healthy by running a non-blocking select on it.
         if not socket.testConnection():
-          LOG.error("Checking connection failed for shard %s, marking unhealthy"
+          self.LOG.error("Checking connection failed for shard %s, marking unhealthy"
                     % str(shard))
           self._HealthCallback(shard)
         else:
           return shard, socket
       except AcquirePoolMemeberException:
-        LOG.error("All nodes failed for pool %s." % self._pool_name)
+        self.LOG.error("All nodes failed for pool.")
+        self._increment_varz(metric='scales.SingletonPool.')
         raise
       except Exception as ex:
         last_exception = traceback.format_exc()
@@ -285,8 +310,8 @@ class SingletonPool(object):
           raise
         else:
           # Mark the server unhealthy as we were unable to connect to it.
-          LOG.error("Unable to initialize pool member %s for pool %s" % (
-              str(shard), self._pool_name))
+          LOG.error("Unable to initialize pool member %s for pool." %
+              str(shard))
           self._HealthCallback(shard)
 
       # If we got here, we were unable to open a connection with
@@ -294,8 +319,7 @@ class SingletonPool(object):
       num_retries+=1
       if num_retries > max_retries:
         raise AcquirePoolMemeberException(
-          "Unable to acquire a node in %d tries for pool %s." % (
-              num_retries, self._pool_name))
+          "Unable to acquire a node in %d tries for pool." % num_retries)
 
   def Return(self, server, socket):
     if server in self._servers:
@@ -328,8 +352,7 @@ class SingletonPool(object):
       return
 
     self._AddServer(instance)
-    LOG.info("Instance joined [%s] (%d members)" % (
-      self._pool_name, len(self._servers)))
+    self.LOG.info("Instance joined (%d members)" % len(self._servers))
 
   def _OnServerSetLeave(self, instance):
     """Invoked when an instance leaves the cluster.
@@ -343,27 +366,5 @@ class SingletonPool(object):
     self._init_done.wait()
     self._RemoveServer(instance)
 
-    LOG.info("Instance left [%s] (%d members)" % (
-      self._pool_name, len(self._servers)))
+    self.LOG.info("Instance left (%d members)" % len(self._servers))
     ## ------- /ZooKeeper methods --------
-
-
-
-class _StickySingletonPool(SingletonPool):
-  """An AuroraSocketPool that creates sockets stuck to a single instance.
-  """
-  def __init__(self, *args, **kwargs):
-    self._random_server = None
-    super(_StickySingletonPool, self).__init__(*args, **kwargs)
-
-  def _OnHealthyServersChanged(self):
-    if any(self._healthy_servers):
-      self._random_server = random.choice(list(self._healthy_servers))
-    else:
-      self._random_server = None
-
-  def _GetNextServer(self):
-    if self._random_server:
-      return self._random_server
-    else:
-      raise AcquirePoolMemeberException('No resources were in the pool')

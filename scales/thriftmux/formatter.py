@@ -14,7 +14,7 @@ from scales.message import (
   RerrorMessage,
   Deadline
 )
-from scales.ttypes import MessageType
+from scales.constants import MessageType
 
 class Tag(object):
   KEY = "__Tag"

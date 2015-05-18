@@ -1,5 +1,7 @@
 """Core classes for dispatching messages from a Scales proxy to a message sink stack."""
 
+import functools
+
 from gevent.event import AsyncResult
 
 from scales.message import (
@@ -12,6 +14,7 @@ from scales.message import (
   Timeout,
   TimeoutMessage,)
 from scales.sink import ReplySink
+from scales.varz import VarzReceiver
 
 class InternalError(Exception): pass
 class ScalesError(Exception):  pass
@@ -21,9 +24,10 @@ class GeventMessageTerminatorSink(ReplySink):
   """A ReplySink that converts a Message into an AsyncResult.
   This sink terminates the reply chain.
   """
-  def __init__(self):
+  def __init__(self, source):
     super(GeventMessageTerminatorSink, self).__init__()
     self._ar = AsyncResult()
+    self._source = source
 
   @staticmethod
   def _MakeServerException(system_msg):
@@ -47,6 +51,7 @@ class GeventMessageTerminatorSink(ReplySink):
     Args:
       msg - The reply message.
     """
+    MessageDispatcher.Varz.response_messages(self._source)
     if isinstance(msg, RdispatchMessage):
       if msg.error_message:
         self._ar.set_exception(ScalesError(msg.error_message))
@@ -71,6 +76,15 @@ class GeventMessageTerminatorSink(ReplySink):
 
 class MessageDispatcher(object):
   """Handles dispatching incoming and outgoing messages to a client sink stack."""
+  class Varz(object):
+    dispatch_messages = functools.partial(
+        VarzReceiver.IncrementVarz,
+        metric='scales.MessageDispatcher.dispatch_messages',
+        amount=1)
+    response_messages = functools.partial(
+        VarzReceiver.IncrementVarz,
+        metric='scales.MessageDispatcher.response_messages',
+        amount=1)
 
   def __init__(
         self,
@@ -101,15 +115,12 @@ class MessageDispatcher(object):
       or after [timeout] seconds elapse.
     """
     timeout = timeout or self._dispatch_timeout
-    # TODO: move this into the mux timeout sink?
-    ctx = {}
-    if timeout:
-      ctx['com.twitter.finagle.Deadline'] = Deadline(timeout)
-
-    disp_msg = TdispatchMessage(service, method, args, kwargs, ctx)
+    disp_msg = TdispatchMessage(service, method, args, kwargs)
     disp_msg.properties[Timeout.KEY] = timeout
 
     message_sink = self._client_stack_builder.CreateSinkStack()
-    ar_sink = GeventMessageTerminatorSink()
+    source = '%s.%s' % (service, method)
+    ar_sink = GeventMessageTerminatorSink(source)
+    self.Varz.dispatch_messages(source)
     message_sink.AsyncProcessMessage(disp_msg, ar_sink)
     return ar_sink.async_result if ar_sink else None

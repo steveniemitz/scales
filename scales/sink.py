@@ -60,7 +60,7 @@ class SinkStack(object):
 
 
 class ClientMessageSinkStackBuilder(object):
-  def CreateMessageSinks(self):
+  def CreateMessageSinks(self, name):
     raise NotImplementedError()
 
 
