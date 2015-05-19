@@ -10,6 +10,12 @@ from thrift.Thrift import (
 from ..message import MethodReturnMessage
 
 class MessageSerializer(object):
+  """A serializer that can serialize and deserialize thrift method calls.
+
+  This relies on the generated thrift args and return value classes created
+  by the thrift compiler.
+  """
+
   @staticmethod
   def SerializeThriftCall(msg, buf):
     """Serialize a MethodCallMessage to a stream

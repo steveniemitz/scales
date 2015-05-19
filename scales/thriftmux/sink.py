@@ -19,7 +19,7 @@ from ..message import (
 )
 from ..sink import (
   AsyncMessageSink,
-  ClientChannelSink,
+  ClientChannelTransportSink,
   ClientChannelSinkStack,
   ClientFormatterSink,
   ReplySink,
@@ -38,6 +38,8 @@ from .protocol import (
 ROOT_LOG = logging.getLogger('scales.thriftmux')
 
 class TagPool(object):
+  """A class which manages a pool of tags
+    """
   POOL_LOGGER = ROOT_LOG.getChild('TagPool')
 
   class Varz(object):
@@ -48,8 +50,6 @@ class TagPool(object):
       self.max_tag = functools.partial(
           VarzReceiver.SetVarz, source, base_tag % 'max_tag')
 
-  """A class which manages a pool of tags
-  """
   def __init__(self, max_tag, varz_source):
     self._set = set()
     self._next = 1
@@ -89,7 +89,9 @@ class TagPool(object):
     self._set.add(tag)
 
 
-class SocketTransportSink(ClientChannelSink):
+class SocketTransportSink(ClientChannelTransportSink):
+  """A transport sink for thriftmux servers."""
+
   SINK_LOG = ROOT_LOG.getChild('SocketTransportSink')
 
   class Varz(object):
@@ -108,7 +110,6 @@ class SocketTransportSink(ClientChannelSink):
     self._socket = socket
     self._send_queue = Queue()
     self._ping_timeout = 5
-    self._shutdown_ar = AsyncResult()
     self._ping_msg = self._BuildHeader(1, MessageType.Tping, 0)
     self._ping_ar = None
     self._last_ping_start = 0
@@ -121,14 +122,10 @@ class SocketTransportSink(ClientChannelSink):
     self._varz = self.Varz(varz_source, service)
 
   @property
-  def shutdown_result(self):
-    return self._shutdown_ar
-
-  @property
   def isActive(self):
     return self._state != DispatcherState.STOPPED
 
-  def open(self):
+  def _Open(self):
     """Initializes the dispatcher, opening a connection to the remote host.
     This method may only be called once.
     """
@@ -158,9 +155,6 @@ class SocketTransportSink(ClientChannelSink):
       self._open_result.set_exception(e)
       raise
 
-  def close(self):
-    self._Shutdown('close invoked')
-
   def isOpen(self):
     return self._state == DispatcherState.RUNNING
 
@@ -169,6 +163,8 @@ class SocketTransportSink(ClientChannelSink):
     # the send and recv loops will detect connection failures
     # almost instantly.
     return self.isOpen()
+
+  def _ShutdownImpl(self): pass
 
   def _Shutdown(self, reason):
     if not self.isActive:
@@ -180,7 +176,7 @@ class SocketTransportSink(ClientChannelSink):
     self._socket.close()
     if not isinstance(reason, Exception):
       reason = Exception(str(reason))
-    self._shutdown_ar.set_exception(reason)
+    self.shutdown_result.set_exception(reason)
     msg = MethodReturnMessage(error=ScalesClientError(reason))
 
     for sink_stack in self._tag_map.values():
@@ -308,9 +304,6 @@ class SocketTransportSink(ClientChannelSink):
     payload = header + stream.getvalue()
     self._send_queue.put(payload)
 
-  def AsyncProcessResponse(self, sink_stack, context, stream):
-    raise Exception("Not supported.")
-
 
 class ThrfitMuxMessageSerializerSink(ClientFormatterSink):
   class Varz(object):
@@ -343,10 +336,10 @@ class ThrfitMuxMessageSerializerSink(ClientFormatterSink):
     return msg_type, tag
 
   def AsyncProcessMessage(self, msg, reply_sink):
-    fpb = StringIO()
+    buf = StringIO()
     headers = {}
     try:
-      ctx = self._serializer.Marshal(msg, fpb, headers)
+      ctx = self._serializer.Marshal(msg, buf, headers)
     except Exception as ex:
       self._varz.ser_failure()
       msg = MethodReturnMessage(error=ex)
@@ -360,13 +353,10 @@ class ThrfitMuxMessageSerializerSink(ClientFormatterSink):
 
     sink_stack = ClientChannelSinkStack(reply_sink)
     sink_stack.Push(self, ctx)
-    self.next_sink.AsyncProcessRequest(sink_stack, msg, fpb, headers)
+    self.next_sink.AsyncProcessRequest(sink_stack, msg, buf, headers)
     # The call is one way, so ignore the response.
     if one_way_reply_sink:
       one_way_reply_sink.ProcessReturnMessage(MethodReturnMessage())
-
-  def AsyncProcessRequest(self, sink_stack, msg, stream, headers):
-    raise Exception("Not supported")
 
   def AsyncProcessResponse(self, sink_stack, context, stream):
     try:
@@ -420,9 +410,9 @@ class TimeoutSink(AsyncMessageSink):
       self.timeout = functools.partial(
           VarzReceiver.IncrementVarz, source, 'scales.thriftmux.TimeoutSink.timeouts', 1)
 
-  def __init__(self, varz_source):
+  def __init__(self, source):
     super(TimeoutSink, self).__init__()
-    self._varz = self.Varz(varz_source)
+    self._varz = self.Varz(source)
 
   def AsyncProcessMessage(self, msg, reply_sink):
     """Initialize the timeout handler for this request.

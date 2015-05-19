@@ -7,6 +7,7 @@ from thrift.transport import TTransport
 from .varz import VarzReceiver
 
 class VarzSocketWrapper(TTransport.TTransportBase):
+  """A wrapper for Thrift sockets that records various varz about the socket."""
   class Varz(object):
     def __init__(self, service_tag, transport_tag):
       def inc_all(metric, amount):
@@ -26,7 +27,7 @@ class VarzSocketWrapper(TTransport.TTransportBase):
 
   def __init__(self, socket, varz_tag, test_connections=False):
     self._socket = socket
-    self._test_connections = False
+    self._test_connections = test_connections
     self._varz = self.Varz(varz_tag, '%s.%d' % (self.host, self.port))
 
   @property

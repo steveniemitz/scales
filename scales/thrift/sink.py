@@ -2,7 +2,6 @@ from struct import (pack, unpack)
 from cStringIO import StringIO
 
 import gevent
-from gevent.event import AsyncResult
 
 from ..message import (
   MethodCallMessage,
@@ -12,7 +11,7 @@ from ..message import (
   TimeoutError
 )
 from ..sink import (
-  ClientChannelSink,
+  ClientChannelTransportSink,
   ClientChannelSinkStack,
   ClientFormatterSink,
 )
@@ -22,23 +21,16 @@ class NoopTimeout(object):
   def start(self): pass
   def cancel(self): pass
 
-class SocketTransportSink(ClientChannelSink):
+class SocketTransportSink(ClientChannelTransportSink):
   def __init__(self, socket, source):
     super(SocketTransportSink, self).__init__()
     self._socket = socket
-    self._shutdown_ar = AsyncResult()
 
-  @property
-  def shutdown_result(self):
-    return self._shutdown_ar
-
-  def _Shutdown(self, reason):
-    if not self.isOpen():
-      return
+  def _ShutdownImpl(self):
     self._socket.close()
-    if not isinstance(reason, Exception):
-      reason = Exception(str(reason))
-    self._shutdown_ar.set_exception(reason)
+
+  def _Open(self):
+    self._socket.open()
 
   def _AsyncProcessTransaction(self, data, sink_stack, timeout):
     gtimeout = gevent.Timeout.start_new(timeout) if timeout else NoopTimeout()
@@ -73,17 +65,8 @@ class SocketTransportSink(ClientChannelSink):
     gevent.spawn(self._AsyncProcessTransaction, sz + payload, sink_stack, timeout)
     pass
 
-  def AsyncProcessResponse(self, sink_stack, context, stream):
-    raise NotImplementedError("This should never be called.")
-
   def isOpen(self):
     return self._socket.isOpen()
-
-  def open(self):
-    self._socket.open()
-
-  def close(self):
-    self._socket.close()
 
   def testConnection(self):
     return self._socket.testConnection()
@@ -110,9 +93,6 @@ class ThriftFormatterSink(ClientFormatterSink):
     sink_stack = ClientChannelSinkStack(reply_sink)
     sink_stack.Push(self, ctx)
     self.next_sink.AsyncProcessRequest(sink_stack, msg, buf, headers)
-
-  def AsyncProcessRequest(self, sink_stack, msg, stream, headers):
-    raise NotImplementedError('This should never be called.')
 
   def AsyncProcessResponse(self, sink_stack, context, stream):
     try:

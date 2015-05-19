@@ -26,14 +26,20 @@ class GeventMessageTerminatorSink(ReplySink):
     self._source = source
 
   @staticmethod
-  def _MakeServerException(msg):
+  def _WrapException(msg):
     """Creates an exception object that contains the inner exception
     from a SystemErrorMessage.  This allows the actual failure stack
-    to propegate to the waiting greenlet.
+    to propagate to the waiting greenlet.
+
+    Args:
+      msg - The MethodReturnMessage that has an active error.
+
+    Returns:
+      An exception object wrapping the error in the MethodCallMessage.
     """
     stack = getattr(msg, 'stack', None)
     if stack:
-      msg = """An error occured while processing the request
+      msg = """An error occurred while processing the request
 [Inner Exception: --------------------]
 %s[End of Inner Exception---------------]
 """ % ''.join(stack)
@@ -46,16 +52,17 @@ class GeventMessageTerminatorSink(ReplySink):
     Returns no result and throws no exceptions.
 
     Args:
-      msg - The reply message.
+      msg - The reply message (a MethodReturnMessage).
     """
     MessageDispatcher.Varz.response_messages(self._source)
     if isinstance(msg, MethodReturnMessage):
       if msg.error:
-        self._ar.set_exception(self._MakeServerException(msg))
+        self._ar.set_exception(self._WrapException(msg))
       else:
         self._ar.set(msg.return_value)
     else:
-      self._ar.set_exception(InternalError('Unknown response message of type %s' % msg.__class__))
+      self._ar.set_exception(InternalError('Unknown response message of type %s'
+                                           % msg.__class__))
 
   @property
   def async_result(self):
