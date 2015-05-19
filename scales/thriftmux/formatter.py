@@ -27,6 +27,8 @@ class Tag(object):
 
 
 class MessageSerializer(object):
+  """A serializer that can serialize/deserialize method calls into the ThriftMux
+  wire format."""
   def __init__(self):
     self._marshal_map = {
       MethodCallMessage: self._Marshal_Tdispatch,
@@ -93,13 +95,32 @@ class MessageSerializer(object):
     why = buf.read()
     return MethodReturnMessage(error=ServerError(why))
 
-  def Unmarshal(self, tag, msg_type, data, ctx):
+  def Unmarshal(self, tag, msg_type, buf, ctx):
+    """Deserialize a message from a stream.
+
+    Args:
+      tag - The tag of the message.
+      msg_type - The message type intended to be deserialized.
+      buf - The stream to deserialize from.
+      ctx - The context from serialization.
+    Returns:
+      A MethodReturnMessage.
+    """
     unmarshaller = self._unmarshal_map[msg_type]
-    msg = unmarshaller(data, ctx)
+    msg = unmarshaller(buf, ctx)
     msg.tag = tag
     return msg
 
   def Marshal(self, msg, buf, headers):
+    """Serialize a message into a stream.
+
+    Args:
+      msg - The message to serialize.
+      buf - The stream to serialize into.
+      headers - (out) Optional headers associated with the message.
+    Returns:
+      A context to be supplied during deserialization.
+    """
     marshaller = self._marshal_map[msg.__class__]
     return marshaller(msg, buf, headers)
 

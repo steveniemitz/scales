@@ -17,26 +17,29 @@ import gevent
 from gevent.event import Event
 
 from ..varz import VarzReceiver
+from ..sink import ClientChannelTransportSink
 
 ROOT_LOG = logging.getLogger("scales")
 
 class ServerSetProvider(object):
-  __metaclass__ = ABCMeta
-
   """Base class for providing a set of servers, as well as optionally
   notifying the pool of servers joining and leaving the set."""
+  __metaclass__ = ABCMeta
 
   @abstractmethod
   def Initialize(self, on_join, on_leave):
+    """Initialize the provider.
+    This method is called before any calls to GetServers().
+
+     Args:
+      on_join - A function to be called when a server joins the set.
+      on_leave - A function to be called when a server leaves the set.
+    """
     raise NotImplementedError()
 
   @abstractmethod
   def GetServers(self):
     """Get all the current servers in the set.
-
-    Args:
-      on_join - A function to be called when a server joins the set.
-      on_leave - A function to be called when a server leaves the set.
 
     Returns:
       An iterable of servers.
@@ -63,6 +66,8 @@ class StaticServerSetProvider(ServerSetProvider):
 
 
 class ZooKeeperServerSetProvider(ServerSetProvider):
+  """A ServerSetProvider that tracks servers in zookeeper."""
+
   from .zookeeper import ServerSet
   from kazoo.client import KazooClient
   from kazoo.handlers.gevent import SequentialGeventHandler
@@ -74,15 +79,17 @@ class ZooKeeperServerSetProvider(ServerSetProvider):
         handler=self.SequentialGeventHandler(),
         randomize_hosts=True)
     self._zk_path = zk_path
-    self._zk_live = self._zk_client.start_async()
     self._server_set = None
 
   def Initialize(self, on_join, on_leave):
-    self._zk_live.wait()
+    self._zk_client.start()
     self._server_set = self.ServerSet(
         self._zk_client, self._zk_path, on_join, on_leave)
 
   def GetServers(self):
+    if not self._server_set:
+      raise Exception('Intialize() must be called first.')
+
     return self._server_set.get_members()
 
 
@@ -95,7 +102,9 @@ class PoolMemberSelector(object):
   """Base class for selecting a pool member from a set of healthy servers.
   PoolMemberSelectors are notified when healthy servers join or leave the pool.
   """
+  __metaclass__ = ABCMeta
 
+  @abstractmethod
   def GetNextMember(self):
     """Get the next member to use from the pool.
 
@@ -104,13 +113,14 @@ class PoolMemberSelector(object):
     """
     raise NotImplementedError()
 
+  @abstractmethod
   def OnHealthyMembersChanged(self, all_healthy_servers):
     """Called by the pool when the set of healthy servers changes.
 
     Args:
       all_healthy_servers - An iterable of all currently healthy servers.
     """
-    pass
+    raise NotImplementedError()
 
 
 class RoundRobinPoolMemberSelector(PoolMemberSelector):
@@ -132,8 +142,8 @@ class RoundRobinPoolMemberSelector(PoolMemberSelector):
 
 
 class SingletonPool(object):
-  """A pool of resources..
-  """
+  """A pool of resources."""
+
   POOL_LOGGER = ROOT_LOG.getChild('SingletonPool')
   class Varz(object):
     def __init__(self, source):
@@ -141,8 +151,8 @@ class SingletonPool(object):
       base_set = functools.partial(VarzReceiver.SetVarz, source)
       base_inc = functools.partial(VarzReceiver.IncrementVarz, source)
       self.num_servers = functools.partial(base_set, base_var % 'num_servers')
-      self.num_healhy_servers = functools.partial(base_set, base_var % 'num_healhy_servers')
-      self.num_unhealhy_servers = functools.partial(base_set, base_var % 'num_unhealhy_servers')
+      self.num_healthy_servers = functools.partial(base_set, base_var % 'num_healthy_servers')
+      self.num_unhealthy_servers = functools.partial(base_set, base_var % 'num_unhealthy_servers')
       self.resources_created = functools.partial(base_inc, base_var % 'resources_created', 1)
       self.all_members_failed = functools.partial(base_inc, base_var % 'all_members_failed', 1)
 
@@ -201,18 +211,24 @@ class SingletonPool(object):
     self._socket_queue = collections.deque()
     self._OnHealthyServersChanged()
     self._init_done.set()
-    self.ScheduleOperationWithPeriod(10, self._Reset)
+    self._ScheduleOperationWithPeriod(10, self._Reset)
     self._PrepopulatePool(initial_size_min_members, initial_size_factor)
 
   @staticmethod
-  def ScheduleOperationWithPeriodWorker(period, operation):
+  def _ScheduleOperationWithPeriodWorker(period, operation):
     while True:
       gevent.sleep(period)
       operation()
 
   @staticmethod
-  def ScheduleOperationWithPeriod(period, operation):
-    gevent.spawn(SingletonPool.ScheduleOperationWithPeriodWorker, period, operation)
+  def _ScheduleOperationWithPeriod(period, operation):
+    """Schedule an operation to happen ever [period] seconds
+
+    Args:
+      period - The period to run the operation on.
+      operation - A callable to run.
+    """
+    gevent.spawn(SingletonPool._ScheduleOperationWithPeriodWorker, period, operation)
 
   def _PrepopulatePool(self, initial_size_min_members, initial_size_factor):
     """Pre-populate the connection pool at startup.  See ctor for parameters.
@@ -223,7 +239,7 @@ class SingletonPool(object):
     for i in range(calculated_initial_min_size):
       shard = self._GetNextServer()
       socket = self._CreateConnection(shard)
-      self.Return(shard, socket)
+      self._UncheckedReturn(shard, socket)
 
   def _AddServer(self, instance):
     """Adds a servers to the set of servers available to the connection pool.
@@ -249,25 +265,35 @@ class SingletonPool(object):
     self._OnHealthyServersChanged()
 
   def _GetNextServer(self):
+    """Returns the next available healthy server based on the pool
+     member selector.
+
+    Returns:
+      The Member selected.
+    """
     member = self._member_selector.GetNextMember()
     if not member:
       raise AcquirePoolMemeberException("No members were available for pool")
     return member
 
   def _UpdatePoolSizeVarz(self):
+    """Updates varz for num_servers, num_healthy_servers,
+    and num_unhealthy_servers.
+    """
     num_healthy_servers = len(self._healthy_servers)
     num_servers = len(self._servers)
-    self._varz.num_healhy_servers(num_healthy_servers)
+    self._varz.num_healthy_servers(num_healthy_servers)
     self._varz.num_servers(num_servers)
-    self._varz.num_unhealhy_servers(num_servers - num_healthy_servers)
+    self._varz.num_unhealthy_servers(num_servers - num_healthy_servers)
 
   def _OnHealthyServersChanged(self):
+    """Callback raised when a server becomes healthy or unhealthy."""
     self._UpdatePoolSizeVarz()
     self._member_selector.OnHealthyMembersChanged(self._healthy_servers)
 
   def _HealthCallback(self, shard):
-    """Called by connections when they decide their connection is unhealhy.
-    Calling this marks the server unhealhy in the pool.
+    """Called by connections when they decide their connection is unhealthy.
+    Calling this marks the server unhealthy in the pool.
     Existing connections to the server are lazily closed / removed.
     """
     self._healthy_servers.discard(shard)
@@ -284,7 +310,7 @@ class SingletonPool(object):
       try:
         socket = self._CreateConnection(server)
         socket.open()
-        self.Return(server, socket)
+        self._UncheckedReturn(server, socket)
         self._healthy_servers.add(server)
         self._OnHealthyServersChanged()
       except Exception as ex:
@@ -299,12 +325,33 @@ class SingletonPool(object):
       A new, unopened connection.
     """
     self._varz.resources_created()
-    return self._connection_provider.GetConnection(
-      shard,
-      self._pool_name,
-      self._HealthCallback)
+    sink = self._connection_provider.CreateSinkStack(shard, self._pool_name)
+    next_sink = sink
+    while next_sink.next_sink:
+      next_sink = next_sink.next_sink
+
+    if not isinstance(next_sink, ClientChannelTransportSink):
+      raise Exception(
+        "CreateSinkStack must return an instance of a ClientChannelTransportSink")
+
+    # TODO: Note: if the transport sink provider returns the same sink multiple times
+    # (for example, the thriftmux provider keeps its own pool), the _HealthCallback
+    # may be fired multiple times.  We could prevent this, but _HealthCallback
+    # should be idempotent.
+    next_sink.shutdown_result.rawlink(lambda ar: self._HealthCallback(shard))
+    return sink
 
   def Get(self):
+    """Gets the next server from the pool.
+
+    Returns:
+      A (member, resource) tuple.  This same tuple must be passed to Return()
+      when it's no longer being used.
+
+    Throws:
+      AcquirePoolMemberException if the pool has no healthy servers.
+      Exception if an unexpected error occurs unrelated to server connectivity.
+    """
     num_retries = 0
     max_retries = max(len(self._healthy_servers) / 2, 1)
     last_exception = None
@@ -313,7 +360,7 @@ class SingletonPool(object):
         # There's an available socket in the pool, use that.
         shard, socket = self._socket_queue.popleft()
         # It's possible the server this socket is using was marked unhealthy.
-        # If so, close the socekt and get a new one.
+        # If so, close the socket and get a new one.
         if shard not in self._healthy_servers:
           try:
             socket.close()
@@ -327,7 +374,7 @@ class SingletonPool(object):
 
       # Return the connection immediately if no_pop == True,
       if self._shareable_resources:
-        self.Return(shard, socket)
+        self._UncheckedReturn(shard, socket)
 
       # We get to this point if either:
       #  - The socket was dequeued and still healthy or...
@@ -360,24 +407,44 @@ class SingletonPool(object):
           self._HealthCallback(shard)
 
       # If we got here, we were unable to open a connection with
-      # Only retry num_healhy_servers / 2 times before failing.
+      # Only retry num_healthy_servers / 2 times before failing.
       num_retries+=1
       if num_retries > max_retries:
         raise AcquirePoolMemeberException(
           "Unable to acquire a node in %d tries for pool." % num_retries)
 
   def Return(self, server, socket):
+    """Returns a resource to the pool.
+
+    Args:
+      server, socket - The tuple returned from Get()
+    """
+    if not self._shareable_resources:
+      self._UncheckedReturn(server, socket)
+
+  def _UncheckedReturn(self, server, socket):
+    """Returns a resource to the pool.
+
+    Note: This does not check if the pool is configured for sharable resources
+    and always adds it back to the queue.
+
+    Args:
+      server, socket - The tuple returned from Get()
+    """
     if server in self._servers:
       self._socket_queue.append((server, socket))
 
   @contextmanager
   def SafeGet(self):
+    """A Context Manager for getting a resource from the pool and then
+    returning it.
+    """
     shard, socket = None, None
     try:
       shard, socket = self.Get()
       yield socket
     finally:
-      if socket and not self._shareable_resources:
+      if socket:
         self.Return(shard, socket)
 
   ## ------- ZooKeeper methods --------
