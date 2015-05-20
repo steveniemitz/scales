@@ -67,19 +67,21 @@ class StaticServerSetProvider(ServerSetProvider):
 
 class ZooKeeperServerSetProvider(ServerSetProvider):
   """A ServerSetProvider that tracks servers in zookeeper."""
-
   from .zookeeper import ServerSet
   from kazoo.client import KazooClient
   from kazoo.handlers.gevent import SequentialGeventHandler
 
   def __init__(self, zk_servers, zk_path, zk_timeout=30):
-    self._zk_client = self.KazooClient(
-        hosts=zk_servers,
-        timeout=zk_timeout,
-        handler=self.SequentialGeventHandler(),
-        randomize_hosts=True)
+    self._zk_client = self._GetZooKeeperClient(zk_servers, zk_timeout)
     self._zk_path = zk_path
     self._server_set = None
+
+  def _GetZooKeeperClient(self, zk_servers, zk_timeout):
+    return self.KazooClient(
+      hosts=zk_servers,
+      timeout=zk_timeout,
+      handler=self.SequentialGeventHandler(),
+      randomize_hosts=True)
 
   def Initialize(self, on_join, on_leave):
     self._zk_client.start()
@@ -88,7 +90,7 @@ class ZooKeeperServerSetProvider(ServerSetProvider):
 
   def GetServers(self):
     if not self._server_set:
-      raise Exception('Intialize() must be called first.')
+      raise Exception('Initialize() must be called first.')
 
     return self._server_set.get_members()
 

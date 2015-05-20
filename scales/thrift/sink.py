@@ -40,7 +40,7 @@ class SocketTransportSink(ClientChannelTransportSink):
       buf = StringIO(self._socket.readAll(sz))
       gtimeout.cancel()
       gevent.spawn(self._ProcessReply, buf, sink_stack)
-    except gevent.Timeout:
+    except gevent.Timeout: # pylint: disable=E0712
       err = TimeoutError()
       self._socket.close()
       sink_stack.DispatchReplyMessage(MethodReturnMessage(error=err))

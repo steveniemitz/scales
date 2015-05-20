@@ -7,14 +7,14 @@ from gevent.event import AsyncResult
 from .message import (
   MethodCallMessage,
   MethodReturnMessage,
-  Timeout
+  Timeout,
+  TimeoutError
 )
 from .sink import ReplySink
 from .varz import VarzReceiver
 
 class InternalError(Exception): pass
 class ScalesError(Exception):  pass
-class TimeoutError(Exception): pass
 
 class GeventMessageTerminatorSink(ReplySink):
   """A ReplySink that converts a Message into an AsyncResult.
@@ -37,6 +37,10 @@ class GeventMessageTerminatorSink(ReplySink):
     Returns:
       An exception object wrapping the error in the MethodCallMessage.
     """
+    # Don't wrap timeouts.
+    if msg.error is TimeoutError:
+      return msg.error
+
     stack = getattr(msg, 'stack', None)
     if stack:
       msg = """An error occurred while processing the request

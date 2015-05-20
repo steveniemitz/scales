@@ -251,6 +251,10 @@ class Scales(object):
       self._client_provider = client_provider
       return self
 
+    def setServerSetProvider(self, server_set_provider):
+      self._server_set_provider = server_set_provider
+      return self
+
     def build(self):
       """Build a client given the current builder configuration.
 
