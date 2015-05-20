@@ -15,7 +15,7 @@ from ..sink import (
   TransportSinkStackBuilder,
   MessageSinkStackBuilder
 )
-from ..varzsocketwrapper import VarzSocketWrapper
+from ..varz import VarzSocketWrapper
 
 class ThriftMux(BaseBuilder):
   """A builder class for building clients to ThriftMux services."""

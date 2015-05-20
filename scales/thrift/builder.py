@@ -7,7 +7,7 @@ from .sink import (
 )
 from ..sink import (MessageSinkStackBuilder, TransportSinkStackBuilder)
 from ..builder import BaseBuilder
-from ..varzsocketwrapper import VarzSocketWrapper
+from ..varz import VarzSocketWrapper
 
 
 class Thrift(BaseBuilder):
