@@ -3,9 +3,6 @@ from __future__ import absolute_import
 import collections
 import functools
 
-from thrift.transport import TTransport
-
-
 class VarzReceiver(object):
   """A stub class to receive varz from Scales."""
   VARZ_DATA = collections.defaultdict(int)
@@ -21,7 +18,7 @@ class VarzReceiver(object):
     VarzReceiver.VARZ_DATA[(metric, source)] = value
 
 
-class VarzSocketWrapper(TTransport.TTransportBase):
+class VarzSocketWrapper(object):
   """A wrapper for Thrift sockets that records various varz about the socket."""
   class Varz(object):
     def __init__(self, service_tag, transport_tag):
@@ -76,6 +73,17 @@ class VarzSocketWrapper(TTransport.TTransportBase):
   def close(self):
     self._varz.num_connections(-1)
     self._socket.close()
+
+  def readAll(self, sz):
+    buff = ''
+    have = 0
+    while have < sz:
+      chunk = self.read(sz - have)
+      have += len(chunk)
+      buff += chunk
+      if len(chunk) == 0:
+        raise EOFError()
+    return buff
 
   def testConnection(self):
     if not self._test_connections:
