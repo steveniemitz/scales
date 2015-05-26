@@ -100,12 +100,22 @@ class MethodReturnMessage(Message):
     self.return_value = return_value
     self.error = error
     if error:
-      try:
-        raise ZeroDivisionError
-      except ZeroDivisionError:
-        tb = sys.exc_info()[2]
-      stack = traceback.format_list(traceback.extract_stack(tb.tb_frame.f_back))
-      error_name = '%s.%s' % (error.__module__, error.__class__.__name__)
+      exc_info = sys.exc_info()
+      if len(exc_info) != 3 or exc_info[2] is None:
+        try:
+          raise ZeroDivisionError
+        except ZeroDivisionError:
+          tb = sys.exc_info()[2]
+          frame = tb.tb_frame.f_back
+      else:
+        tb = exc_info[2]
+        while tb.tb_next is not None:
+          tb = tb.tb_next
+        frame = tb.tb_frame
+
+      stack = traceback.format_list(traceback.extract_stack(frame))
+      error_module = getattr(error, '__module__', '<builtin>')
+      error_name = '%s.%s' % (error_module, error.__class__.__name__)
       stack = stack + traceback.format_exception_only(error_name, error.message)
       self.stack = stack
     else:
