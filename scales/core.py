@@ -79,19 +79,52 @@ class ClientProxyBuilder(object):
     return proxy_cls
 
 
+class ScalesUriParser(object):
+  Endpoint = collections.namedtuple('Endpoint', 'host port')
+  Server = collections.namedtuple('Server', 'service_endpoint')
+
+  def __init__(self):
+    self.handlers = {
+      'tcp': self._HandleTcp,
+      'zk': self._HandleZooKeeper
+    }
+
+  def Parse(self, uri):
+    prefix, rest = uri.split('://', 1)
+    if not prefix:
+      raise Exception("Invalid URI")
+
+    handler = self.handlers.get(prefix.lower(), None)
+    if not handler:
+      raise Exception("No handler found for prefix %s" % prefix)
+    return handler(rest)
+
+  def _HandleTcp(self, uri):
+    servers = uri.split(',')
+    server_objs = []
+    for s in servers:
+      parts = s.split(':')
+      server = self.Server(self.Endpoint(parts[0], int(parts[1])))
+      server_objs.append(server)
+    return StaticServerSetProvider(server_objs)
+
+  def _HandleZooKeeper(self, uri):
+    hosts, path = uri.split('/', 1)
+    return ZooKeeperServerSetProvider(hosts, path)
+
+
 class Scales(object):
   """Factory for scales clients."""
 
   class ClientBuilder(object):
     """Builder for creating Scales clients."""
-    Endpoint = collections.namedtuple('Endpoint', 'host port')
-    Server = collections.namedtuple('Server', 'service_endpoint')
     _POOLS = {}
 
     def __init__(self, Iface):
       self._built = False
       self._service = Iface
       self._name = Iface.__module__
+      self._uri_parser = ScalesUriParser()
       self._uri = None
       self._selector = RoundRobinPoolMemberSelector()
       self._timeout = 10
@@ -159,28 +192,20 @@ class Scales(object):
     def setUri(self, uri):
       """Sets the URI for this client.
 
-      Uri may be in the form of:
+      By default, uri may be in the form of:
         tcp://<host:port>[,...]
       or
         zk://<zk_host:zk:port>[,...]/full/zk/path
       """
       self._uri = uri
-      if self._uri.startswith('zk://'):
-        uri = uri[5:]
-        hosts, path = uri.split('/', 1)
-        self._server_set_provider = ZooKeeperServerSetProvider(hosts, path)
-      elif self._uri.startswith('tcp://'):
-        uri = self._uri[6:]
-        servers = uri.split(',')
-        server_objs = []
-        for s in servers:
-          parts = s.split(':')
-          server = self.Server(self.Endpoint(parts[0], int(parts[1])))
-          server_objs.append(server)
+      self._server_set_provider = self._uri_parser.Parse(uri)
+      return self
 
-        self._server_set_provider = StaticServerSetProvider(server_objs)
-      else:
-        raise NotImplementedError("Invalid URI")
+    def setUriParser(self, parser):
+      """Sets the URI parser for this builder.
+
+      Uri parsers build a ServerSetProvider from a uri."""
+      self._uri_parser = parser
       return self
 
     def setPoolMemberSelector(self, selector):
