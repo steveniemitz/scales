@@ -3,6 +3,7 @@
 import collections
 import functools
 import inspect
+import weakref
 
 from .dispatch import MessageDispatcher
 from .pool import (
@@ -100,11 +101,11 @@ class ScalesUriParser(object):
     return handler(rest)
 
   def _HandleTcp(self, uri):
-    servers = uri.split(',')
+    servers = uri.rstrip('/').split(',')
     server_objs = []
     for s in servers:
-      parts = s.split(':')
-      server = self.Server(self.Endpoint(parts[0], int(parts[1])))
+      host, port = s.split(':')
+      server = self.Server(self.Endpoint(host, int(port)))
       server_objs.append(server)
     return StaticServerSetProvider(server_objs)
 
@@ -118,7 +119,7 @@ class Scales(object):
 
   class ClientBuilder(object):
     """Builder for creating Scales clients."""
-    _POOLS = {}
+    _POOLS = weakref.WeakValueDictionary()
 
     def __init__(self, Iface):
       self._built = False
