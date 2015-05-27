@@ -348,7 +348,7 @@ class PooledTransportSink(ClientChannelSink):
     try:
       shard, sink = self._pool.Get()
     except Exception as e:
-      excr = MethodReturnMessage(error=ScalesClientError(e))
+      excr = MethodReturnMessage(error=e)
       sink_stack.DispatchReplyMessage(excr)
       return
 

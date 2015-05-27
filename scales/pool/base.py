@@ -2,7 +2,6 @@
 
 import collections
 import itertools
-import functools
 import logging
 import random
 import traceback
@@ -16,7 +15,11 @@ from contextlib import contextmanager
 import gevent
 from gevent.event import Event
 
-from ..varz import VarzReceiver
+from ..varz import (
+  Counter,
+  Gauge,
+  VarzBase
+)
 from ..sink import ClientChannelTransportSink
 
 ROOT_LOG = logging.getLogger("scales")
@@ -147,16 +150,15 @@ class SingletonPool(object):
   """A pool of resources."""
 
   POOL_LOGGER = ROOT_LOG.getChild('SingletonPool')
-  class Varz(object):
-    def __init__(self, source):
-      base_var = 'scales.SingletonPool.%s'
-      base_set = functools.partial(VarzReceiver.SetVarz, source, None)
-      base_inc = functools.partial(VarzReceiver.IncrementVarz, source, None)
-      self.num_servers = functools.partial(base_set, base_var % 'num_servers')
-      self.num_healthy_servers = functools.partial(base_set, base_var % 'num_healthy_servers')
-      self.num_unhealthy_servers = functools.partial(base_set, base_var % 'num_unhealthy_servers')
-      self.resources_created = functools.partial(base_inc, base_var % 'resources_created', 1)
-      self.all_members_failed = functools.partial(base_inc, base_var % 'all_members_failed', 1)
+  class Varz(VarzBase):
+    _VARZ_BASE_NAME = 'scales.SingletonPool'
+    _VARZ = {
+      'num_servers': Gauge,
+      'num_healthy_servers': Gauge,
+      'num_unhealthy_servers': Gauge,
+      'resources_created': Counter,
+      'all_members_failed': Counter
+    }
 
   def __init__(
       self,
