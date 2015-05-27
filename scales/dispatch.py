@@ -120,7 +120,7 @@ class MessageDispatcher(object):
     disp_msg.properties[Timeout.KEY] = timeout
 
     message_sink = self._client_stack_builder.CreateSinkStack()
-    source = '%s.%s' % (self._service, method)
+    source = '%s.%s' % (self._service.__module__, method)
     ar_sink = GeventMessageTerminatorSink(source)
     self.Varz.dispatch_messages(source)
     message_sink.AsyncProcessMessage(disp_msg, ar_sink)
