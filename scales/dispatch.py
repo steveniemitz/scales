@@ -1,6 +1,6 @@
 """Core classes for dispatching messages from a Scales proxy to a message sink stack."""
 
-import functools
+import time
 
 from gevent.event import AsyncResult
 
@@ -11,7 +11,12 @@ from .message import (
   TimeoutError
 )
 from .sink import ReplySink
-from .varz import VarzReceiver
+from .varz import (
+  Counter,
+  SourceType,
+  AverageTimer,
+  VarzBase
+)
 
 class InternalError(Exception): pass
 class ScalesError(Exception):  pass
@@ -20,10 +25,11 @@ class GeventMessageTerminatorSink(ReplySink):
   """A ReplySink that converts a Message into an AsyncResult.
   This sink terminates the reply chain.
   """
-  def __init__(self, source):
+  def __init__(self, source, start_time):
     super(GeventMessageTerminatorSink, self).__init__()
     self._ar = AsyncResult()
     self._source = source
+    self._start_time = start_time
 
   @staticmethod
   def _WrapException(msg):
@@ -58,11 +64,14 @@ class GeventMessageTerminatorSink(ReplySink):
     Args:
       msg - The reply message (a MethodReturnMessage).
     """
-    MessageDispatcher.Varz.response_messages(self._source)
+    end_time = time.clock()
+    MessageDispatcher.Varz.request_latency(self._source, end_time - self._start_time)
     if isinstance(msg, MethodReturnMessage):
       if msg.error:
+        MessageDispatcher.Varz.exception_messages(self._source)
         self._ar.set_exception(self._WrapException(msg))
       else:
+        MessageDispatcher.Varz.success_messages(self._source)
         self._ar.set(msg.return_value)
     else:
       self._ar.set_exception(InternalError('Unknown response message of type %s'
@@ -74,15 +83,15 @@ class GeventMessageTerminatorSink(ReplySink):
 
 class MessageDispatcher(object):
   """Handles dispatching incoming and outgoing messages to a client sink stack."""
-  class Varz(object):
-    dispatch_messages = functools.partial(
-        VarzReceiver.IncrementVarz,
-        metric='scales.MessageDispatcher.dispatch_messages',
-        amount=1)
-    response_messages = functools.partial(
-        VarzReceiver.IncrementVarz,
-        metric='scales.MessageDispatcher.response_messages',
-        amount=1)
+  class Varz(VarzBase):
+    _VARZ_BASE_NAME = 'scales.MessageDispatcher'
+    _VARZ_SOURCE_TYPE = SourceType.MethodAndService
+    _VARZ = {
+      'dispatch_messages': Counter,
+      'success_messages': Counter,
+      'exception_messages': Counter,
+      'request_latency': AverageTimer
+    }
 
   def __init__(
         self,
@@ -120,8 +129,8 @@ class MessageDispatcher(object):
     disp_msg.properties[Timeout.KEY] = timeout
 
     message_sink = self._client_stack_builder.CreateSinkStack()
-    source = '%s.%s' % (self._service.__module__, method)
-    ar_sink = GeventMessageTerminatorSink(source)
+    source = method, self._service.__module__
+    ar_sink = GeventMessageTerminatorSink(source, time.clock())
     self.Varz.dispatch_messages(source)
     message_sink.AsyncProcessMessage(disp_msg, ar_sink)
     return ar_sink.async_result if ar_sink else None

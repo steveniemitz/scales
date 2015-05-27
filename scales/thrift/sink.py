@@ -15,6 +15,13 @@ from ..sink import (
   ClientChannelSinkStack,
   ClientFormatterSink,
 )
+from ..varz import (
+  Counter,
+  AggregateTimer,
+  AverageTimer,
+  SourceType,
+  VarzBase
+)
 from .formatter import MessageSerializer
 
 class NoopTimeout(object):
@@ -22,9 +29,23 @@ class NoopTimeout(object):
   def cancel(self): pass
 
 class SocketTransportSink(ClientChannelTransportSink):
+  class Varz(VarzBase):
+    _VARZ_BASE_NAME = 'scales.thrift.SocketTransportSink'
+    _VARZ_SOURCE_TYPE = SourceType.ServiceAndEndpoint
+    _VARZ = {
+      'messages_sent': Counter,
+      'messages_recv': Counter,
+      'send_time': AggregateTimer,
+      'recv_time': AggregateTimer,
+      'send_latency': AverageTimer,
+      'recv_latency': AverageTimer
+    }
+
   def __init__(self, socket, source):
     super(SocketTransportSink, self).__init__()
     self._socket = socket
+    socket_source = '%s:%d' % (self._socket.host, self._socket.port)
+    self._varz = self.Varz((source, socket_source))
 
   def _ShutdownImpl(self):
     self._socket.close()
@@ -35,9 +56,17 @@ class SocketTransportSink(ClientChannelTransportSink):
   def _AsyncProcessTransaction(self, data, sink_stack, timeout):
     gtimeout = gevent.Timeout.start_new(timeout) if timeout else NoopTimeout()
     try:
-      self._socket.write(data)
+      with self._varz.send_time.Measure():
+        with self._varz.send_latency.Measure():
+          self._socket.write(data)
+      self._varz.messages_sent()
+
       sz, = unpack('!i', self._socket.readAll(4))
-      buf = StringIO(self._socket.readAll(sz))
+      with self._varz.recv_time.Measure():
+        with self._varz.recv_latency.Measure():
+          buf = StringIO(self._socket.readAll(sz))
+      self._varz.messages_recv()
+
       gtimeout.cancel()
       gevent.spawn(self._ProcessReply, buf, sink_stack)
     except gevent.Timeout: # pylint: disable=E0712
