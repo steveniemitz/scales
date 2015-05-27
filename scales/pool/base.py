@@ -150,8 +150,8 @@ class SingletonPool(object):
   class Varz(object):
     def __init__(self, source):
       base_var = 'scales.SingletonPool.%s'
-      base_set = functools.partial(VarzReceiver.SetVarz, source)
-      base_inc = functools.partial(VarzReceiver.IncrementVarz, source)
+      base_set = functools.partial(VarzReceiver.SetVarz, source, None)
+      base_inc = functools.partial(VarzReceiver.IncrementVarz, source, None)
       self.num_servers = functools.partial(base_set, base_var % 'num_servers')
       self.num_healthy_servers = functools.partial(base_set, base_var % 'num_healthy_servers')
       self.num_unhealthy_servers = functools.partial(base_set, base_var % 'num_unhealthy_servers')

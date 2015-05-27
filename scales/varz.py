@@ -5,17 +5,19 @@ import functools
 
 class VarzReceiver(object):
   """A stub class to receive varz from Scales."""
-  VARZ_DATA = collections.defaultdict(int)
+  VARZ_DATA = collections.defaultdict(
+      lambda: collections.defaultdict(
+          lambda: collections.defaultdict(int)))
 
   @staticmethod
-  def IncrementVarz(source, metric, amount=1):
+  def IncrementVarz(service, endpoint, metric, amount=1):
     """Increment (source, metric) by amount"""
-    VarzReceiver.VARZ_DATA[(metric, source)] += amount
+    VarzReceiver.VARZ_DATA[metric][service][endpoint] += amount
 
   @staticmethod
-  def SetVarz(source, metric, value):
+  def SetVarz(service, endpoint, metric, value):
     """Set (source, metric) to value"""
-    VarzReceiver.VARZ_DATA[(metric, source)] = value
+    VarzReceiver.VARZ_DATA[metric][service][endpoint] = value
 
 
 class VarzSocketWrapper(object):
@@ -23,8 +25,7 @@ class VarzSocketWrapper(object):
   class Varz(object):
     def __init__(self, service_tag, transport_tag):
       def inc_all(metric, amount):
-        VarzReceiver.IncrementVarz(service_tag, metric, amount)
-        VarzReceiver.IncrementVarz(transport_tag, metric, amount)
+        VarzReceiver.IncrementVarz(service_tag, transport_tag, metric, amount)
       base_tag = 'scales.socket.%s'
       self.bytes_recv = functools.partial(
         inc_all, base_tag % 'bytes_recv')
@@ -40,7 +41,7 @@ class VarzSocketWrapper(object):
   def __init__(self, socket, varz_tag, test_connections=False):
     self._socket = socket
     self._test_connections = test_connections
-    self._varz = self.Varz(varz_tag, '%s.%d' % (self.host, self.port))
+    self._varz = self.Varz(varz_tag, '%s:%d' % (self.host, self.port))
 
   @property
   def host(self):

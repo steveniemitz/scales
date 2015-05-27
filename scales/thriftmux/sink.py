@@ -43,19 +43,19 @@ class TagPool(object):
   POOL_LOGGER = ROOT_LOG.getChild('TagPool')
 
   class Varz(object):
-    def __init__(self, source):
+    def __init__(self, service, source):
       base_tag = 'scales.thriftmux.TagPool.%s'
       self.pool_exhausted = functools.partial(
-          VarzReceiver.IncrementVarz, source, base_tag % 'pool_exhausted', 1)
+          VarzReceiver.IncrementVarz, service, source, base_tag % 'pool_exhausted', 1)
       self.max_tag = functools.partial(
-          VarzReceiver.SetVarz, source, base_tag % 'max_tag')
+          VarzReceiver.SetVarz, service, source, base_tag % 'max_tag')
 
-  def __init__(self, max_tag, varz_source):
+  def __init__(self, max_tag, service, host):
     self._set = set()
     self._next = 1
     self._max_tag = max_tag
-    self._varz = self.Varz(varz_source)
-    self.LOG = self.POOL_LOGGER.getChild('[%s]' % varz_source)
+    self._varz = self.Varz(service, host)
+    self.LOG = self.POOL_LOGGER.getChild('[%s.%s]' % (service, host))
 
   def get(self):
     """Get a tag from the pool.
@@ -95,11 +95,9 @@ class SocketTransportSink(ClientChannelTransportSink):
   SINK_LOG = ROOT_LOG.getChild('SocketTransportSink')
 
   class Varz(object):
-    def __init__(self, socket_source, pool_source):
+    def __init__(self, pool_source, socket_source):
       base_tag = 'scales.thriftmux.SocketTransportSink.%s'
-      def inc_base(metric, amount):
-        VarzReceiver.IncrementVarz(socket_source, metric, amount)
-        VarzReceiver.IncrementVarz(pool_source, metric, amount)
+      inc_base = functools.partial(VarzReceiver.IncrementVarz, pool_source, socket_source)
       self.messages_sent = functools.partial(inc_base, base_tag % 'messages_sent', 1)
       self.messages_recv = functools.partial(inc_base, base_tag % 'messages_recv', 1)
       self.active = functools.partial(inc_base, base_tag % 'active')
@@ -115,11 +113,11 @@ class SocketTransportSink(ClientChannelTransportSink):
     self._last_ping_start = 0
     self._state = DispatcherState.UNINITIALIZED
     self._open_result = None
-    self.LOG = self.SINK_LOG.getChild('[%s:%d]' % (
-        self._socket.host, self._socket.port))
-    varz_source = '%s.%d' % (self._socket.host, self._socket.port)
-    self._tag_pool = TagPool((2 ** 24) - 1, varz_source)
-    self._varz = self.Varz(varz_source, service)
+    self.LOG = self.SINK_LOG.getChild('[%s.%s:%d]' % (
+        service, self._socket.host, self._socket.port))
+    socket_source = '%s:%d' % (self._socket.host, self._socket.port)
+    self._tag_pool = TagPool((2 ** 24) - 1, service, socket_source)
+    self._varz = self.Varz(service, socket_source)
 
   @property
   def isActive(self):
@@ -310,9 +308,9 @@ class ThrfitMuxMessageSerializerSink(ClientFormatterSink):
     def __init__(self, source):
       base_tag = 'scales.thriftmux.ThrfitMuxMessageSerializerSink.%s'
       self.deser_failure = functools.partial(
-          VarzReceiver.IncrementVarz, source, base_tag % 'deserialization_failures', 1)
+          VarzReceiver.IncrementVarz, source, None, base_tag % 'deserialization_failures', 1)
       self.ser_failure = functools.partial(
-        VarzReceiver.IncrementVarz, source, base_tag % 'serialization_failures', 1)
+        VarzReceiver.IncrementVarz, source, None, base_tag % 'serialization_failures', 1)
 
   def __init__(self, varz_source):
     super(ThrfitMuxMessageSerializerSink, self).__init__()
@@ -408,7 +406,7 @@ class TimeoutSink(AsyncMessageSink):
   class Varz(object):
     def __init__(self, source):
       self.timeout = functools.partial(
-          VarzReceiver.IncrementVarz, source, 'scales.thriftmux.TimeoutSink.timeouts', 1)
+          VarzReceiver.IncrementVarz, source, None, 'scales.thriftmux.TimeoutSink.timeouts', 1)
 
   def __init__(self, source):
     super(TimeoutSink, self).__init__()

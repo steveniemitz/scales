@@ -58,11 +58,12 @@ class GeventMessageTerminatorSink(ReplySink):
     Args:
       msg - The reply message (a MethodReturnMessage).
     """
-    MessageDispatcher.Varz.response_messages(self._source)
     if isinstance(msg, MethodReturnMessage):
       if msg.error:
+        MessageDispatcher.Varz.exception_messages(self._source)
         self._ar.set_exception(self._WrapException(msg))
       else:
+        MessageDispatcher.Varz.success_messages(self._source)
         self._ar.set(msg.return_value)
     else:
       self._ar.set_exception(InternalError('Unknown response message of type %s'
@@ -77,12 +78,19 @@ class MessageDispatcher(object):
   class Varz(object):
     dispatch_messages = functools.partial(
         VarzReceiver.IncrementVarz,
+        endpoint=None,
         metric='scales.MessageDispatcher.dispatch_messages',
         amount=1)
-    response_messages = functools.partial(
+    success_messages = functools.partial(
         VarzReceiver.IncrementVarz,
-        metric='scales.MessageDispatcher.response_messages',
+        endpoint=None,
+        metric='scales.MessageDispatcher.success_messages',
         amount=1)
+    exception_messages = functools.partial(
+      VarzReceiver.IncrementVarz,
+      endpoint=None,
+      metric='scales.MessageDispatcher.exception_messages',
+      amount=1)
 
   def __init__(
         self,
