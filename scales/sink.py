@@ -47,9 +47,7 @@ from gevent.event import AsyncResult
 from .constants import DispatcherState
 from .message import (
   MethodReturnMessage,
-  ScalesClientError
 )
-
 
 class MessageSink(object):
   """A base class for all message sinks.

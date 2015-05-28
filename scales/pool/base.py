@@ -386,6 +386,7 @@ class SingletonPool(object):
       # In both cases try to open it now (if it's not already).
       try:
         if not socket.isOpen():
+          self.LOG.info("Opening socket for shard %s" % str(shard))
           socket.open()
           self.LOG.info("Opened socket for shard %s" % str(shard))
 

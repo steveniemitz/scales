@@ -25,6 +25,8 @@ from ..sink import (
 )
 from ..constants import DispatcherState
 from ..varz import (
+  AggregateTimer,
+  AverageTimer,
   Counter,
   Gauge,
   SourceType,
@@ -104,7 +106,12 @@ class SocketTransportSink(ClientChannelTransportSink):
     _VARZ = {
       'messages_sent': Counter,
       'messages_recv': Counter,
-      'active': Gauge
+      'active': Gauge,
+      'send_queue_size': Gauge,
+      'send_time': AggregateTimer,
+      'recv_time': AggregateTimer,
+      'send_latency': AverageTimer,
+      'recv_latency': AverageTimer
     }
 
   def __init__(self, socket, service):
@@ -231,7 +238,10 @@ class SocketTransportSink(ClientChannelTransportSink):
     while self.isActive:
       try:
         payload = self._send_queue.get()
-        self._socket.write(payload)
+        queue_len = self._send_queue.qsize()
+        self._varz.send_queue_size(queue_len)
+        with self._varz.send_time.Measure():
+          self._socket.write(payload)
         self._varz.messages_sent()
       except Exception as e:
         self._Shutdown(e)
@@ -246,7 +256,8 @@ class SocketTransportSink(ClientChannelTransportSink):
     while self.isActive:
       try:
         sz, = unpack('!i', self._socket.readAll(4))
-        buf = StringIO(self._socket.readAll(sz))
+        with self._varz.recv_time.Measure():
+          buf = StringIO(self._socket.readAll(sz))
         self._varz.messages_recv()
         gevent.spawn(self._ProcessReply, buf)
       except Exception as e:

@@ -14,7 +14,7 @@ from .pool import (
 )
 from .sink import (
   ClientFormatterSink,
-  PooledTransportSink
+  PooledTransportSink,
 )
 
 
