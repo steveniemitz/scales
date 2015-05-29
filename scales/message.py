@@ -27,6 +27,8 @@ class TimeoutError(Exception):
 
 
 class Message(object):
+  __slots__ = '_properties',
+
   """The base class for all Messages."""
   def __init__(self):
     self._properties = None
@@ -53,6 +55,8 @@ class Message(object):
 
 
 class MethodCallMessage(Message):
+  __slots__ = ('service', 'method', 'args', 'kwargs')
+
   """A Message representing a method call."""
   def __init__(self, service, method, args, kwargs):
     """
@@ -70,6 +74,8 @@ class MethodCallMessage(Message):
 
 
 class MethodDiscardMessage(Message):
+  __slots__ = ('which', 'reason')
+
   """A Message representing a notification from the client that it has discarded
   a message, and the server can abort processing."""
   def __init__(self, which, reason):
@@ -88,6 +94,8 @@ class MethodDiscardMessage(Message):
 
 
 class MethodReturnMessage(Message):
+  __slots__ = ('return_value', 'error', 'stack')
+
   """A message representing the return value from a remote service."""
   def __init__(self, return_value=None, error=None):
     """
