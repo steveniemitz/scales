@@ -256,6 +256,7 @@ class SingletonPool(object):
       self._servers.add(instance.service_endpoint)
       self._healthy_servers.add(instance.service_endpoint)
       self._OnHealthyServersChanged()
+      self.LOG.info("Instance joined (%d members)" % len(self._servers))
 
   def _RemoveServer(self, instance):
     """Removes a server from the connection pool.  Outstanding connections will
@@ -386,19 +387,18 @@ class SingletonPool(object):
       # In both cases try to open it now (if it's not already).
       try:
         if not socket.isOpen():
-          self.LOG.info("Opening socket for shard %s" % str(shard))
+          self.LOG.info("Opening transport for endpoint %s" % str(shard))
           socket.open()
-          self.LOG.info("Opened socket for shard %s" % str(shard))
 
         # Check if the socket is healthy by running a non-blocking select on it.
         if not socket.testConnection():
-          self.LOG.error("Checking connection failed for shard %s, marking unhealthy"
+          self.LOG.error("Checking connection failed for endpoint %s, marking unhealthy"
                     % str(shard))
           self._HealthCallback(shard)
         else:
           return shard, socket
       except AcquirePoolMemeberException:
-        self.LOG.error("All nodes failed for pool.")
+        self.LOG.error("All endpoints failed for pool.")
         self._varz.all_members_failed()
         raise
       except Exception as ex:
@@ -407,7 +407,7 @@ class SingletonPool(object):
           raise
         else:
           # Mark the server unhealthy as we were unable to connect to it.
-          self.LOG.error("Unable to initialize pool member %s for pool." %
+          self.LOG.error("Unable to initialize endpoint %s." %
               str(shard))
           self._HealthCallback(shard)
 
@@ -416,7 +416,7 @@ class SingletonPool(object):
       num_retries+=1
       if num_retries > max_retries:
         raise AcquirePoolMemeberException(
-          "Unable to acquire a node in %d tries for pool." % num_retries)
+          "Unable to acquire an endpoint in %d tries." % num_retries)
 
   def Return(self, server, socket):
     """Returns a resource to the pool.
@@ -469,7 +469,6 @@ class SingletonPool(object):
       return
 
     self._AddServer(instance)
-    self.LOG.info("Instance joined (%d members)" % len(self._servers))
 
   def _OnServerSetLeave(self, instance):
     """Invoked when an instance leaves the cluster.

@@ -16,6 +16,10 @@ from .sink import (
   ClientFormatterSink,
   PooledTransportSink,
 )
+from .timer_queue import TimerQueue
+
+# A timer queue for all async timeouts in scales.
+GLOBAL_TIMER_QUEUE = TimerQueue()
 
 
 class ClientProxyBuilder(object):
