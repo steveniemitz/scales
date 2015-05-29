@@ -7,6 +7,7 @@ import gevent
 from gevent.event import AsyncResult, Event
 from gevent.queue import Queue
 
+from ..core import TimerQueue
 from ..message import (
   Deadline,
   MethodCallMessage,
@@ -330,7 +331,6 @@ class ThrfitMuxMessageSerializerSink(ClientFormatterSink):
   def __init__(self, varz_source):
     super(ThrfitMuxMessageSerializerSink, self).__init__()
     self._serializer = MessageSerializer()
-    self._reply_sink = None
     self._varz = self.Varz(varz_source)
 
   @staticmethod
@@ -384,28 +384,25 @@ class ThrfitMuxMessageSerializerSink(ClientFormatterSink):
 class TimeoutReplySink(ReplySink):
   LOG = logging.getLogger("scales.thriftmux.TimeoutReplySink")
 
-  def __init__(self, client_sink, msg, next_sink, timeout, varz):
+  def __init__(self, client_sink, msg, next_sink, timeout):
     super(TimeoutReplySink, self).__init__()
     self.next_sink = next_sink
-    self._call_done = Event()
     self._msg = msg
     self._client_sink = client_sink
-    self._varz = varz
-
-    gevent.spawn(self._TimeoutHelper, timeout)
+    self._varz = client_sink._varz
+    self._cancel_timeout = self._client_sink._timer_queue.Schedule(timeout, self._TimeoutHelper)
 
   def ProcessReturnMessage(self, msg):
-    self._call_done.set()
+    self._cancel_timeout()
     if self.next_sink:
       self.next_sink.ProcessReturnMessage(msg)
 
-  def _TimeoutHelper(self, timeout):
+  def _TimeoutHelper(self):
     """Waits for ar to be signaled or [timeout] seconds to elapse.  If the
     timeout elapses, a Tdiscarded message will be queued to the server indicating
     the client is no longer expecting a reply.
     """
-    self._call_done.wait(timeout)
-    if not self._call_done.is_set() and self.next_sink:
+    if self.next_sink:
       self._varz.timeout()
       error_msg = MethodReturnMessage(error=TimeoutError())
       reply_sink, self.next_sink = self.next_sink, None
@@ -427,6 +424,7 @@ class TimeoutSink(AsyncMessageSink):
   def __init__(self, source):
     super(TimeoutSink, self).__init__()
     self._varz = self.Varz(source)
+    self._timer_queue = TimerQueue()
 
   def AsyncProcessMessage(self, msg, reply_sink):
     """Initialize the timeout handler for this request.
@@ -439,6 +437,6 @@ class TimeoutSink(AsyncMessageSink):
     timeout = msg.properties.get(Timeout.KEY)
     if timeout and isinstance(msg, MethodCallMessage):
       msg.properties['com.twitter.finagle.Deadline'] = Deadline(timeout)
-      reply_sink = TimeoutReplySink(self, msg, reply_sink, timeout, self._varz)
+      reply_sink = TimeoutReplySink(self, msg, reply_sink, timeout)
     return self.next_sink.AsyncProcessMessage(msg, reply_sink)
 
