@@ -5,8 +5,11 @@ from collections import (
   defaultdict,
   deque
 )
+import math
 import random
 import time
+
+import gevent
 
 class VarzType(object):
   Gauge = 1
@@ -98,16 +101,43 @@ class VarzBase(object):
 
 class VarzReceiver(object):
   """A stub class to receive varz from Scales."""
-  METRICS = {}
-
+  VARZ_METRICS = {}
   VARZ_DATA = defaultdict(lambda: defaultdict(int))
+  VARZ_DATA_PERCENTILES = defaultdict(lambda: defaultdict(float))
+  VARZ_PERCENTILES = [.5, .90, .95, .99]
 
-  _PERCENTILE_P = 1
-  _MAX_PERCENTILE_BUCKET = 100000
+  _PERCENTILE_P = .1
+  _MAX_PERCENTILE_BUCKET = 1000
+
+  @staticmethod
+  def _CalculatePercentiles():
+    while True:
+      gevent.sleep(10)
+      for m in [m for m, d in VarzReceiver.VARZ_METRICS.items()
+                if d[0] == VarzType.AverageTimer]:
+        for source, values in VarzReceiver.VARZ_DATA[m].items():
+          values = sorted(values)
+          VarzReceiver.VARZ_DATA_PERCENTILES[m][source] = [
+            VarzReceiver._CalculatePercentile(values, pct)
+            for pct in VarzReceiver.VARZ_PERCENTILES
+          ]
+          gevent.sleep(0)
+
+
+  @staticmethod
+  def _CalculatePercentile(values, pct):
+    k = (len(values) - 1) * pct
+    f = math.floor(k)
+    c = math.floor(k)
+    if f == c:
+      return values[int(k)]
+    d0 = values[int(f)] * (c - k)
+    d1 = values[int(c)] * (k - f)
+    return d0 + d1
 
   @staticmethod
   def RegisterMetric(metric, varz_type, source_type):
-    VarzReceiver.METRICS[metric] = (varz_type, source_type)
+    VarzReceiver.VARZ_METRICS[metric] = (varz_type, source_type)
 
   @staticmethod
   def IncrementVarz(source, metric, amount=1):
@@ -119,19 +149,21 @@ class VarzReceiver(object):
     """Set (source, metric) to value"""
     VarzReceiver.VARZ_DATA[metric][source] = value
 
-  @staticmethod
-  def RecordTimerSample(source, metric, value):
+  @classmethod
+  def RecordTimerSample(cls, source, metric, value):
     if random.random() > VarzReceiver._PERCENTILE_P:
       return
 
-    queue = VarzReceiver.VARZ_DATA[metric][source]
+    queue = cls.VARZ_DATA[metric][source]
     if queue == 0:
       queue = deque()
-      VarzReceiver.VARZ_DATA[metric][source] = queue
+      cls.VARZ_DATA[metric][source] = queue
 
-    if len(queue) > VarzReceiver._MAX_PERCENTILE_BUCKET:
+    if len(queue) > cls._MAX_PERCENTILE_BUCKET:
       queue.popleft()
     queue.append(value)
+
+
 
 class VarzSocketWrapper(object):
   """A wrapper for Thrift sockets that records various varz about the socket."""
@@ -208,3 +240,5 @@ class VarzSocketWrapper(object):
     except select.error:
       self._varz.tests_failed()
       return False
+
+gevent.spawn(VarzReceiver._CalculatePercentiles)

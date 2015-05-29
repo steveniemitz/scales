@@ -107,9 +107,7 @@ class MessageSerializer(object):
       A MethodReturnMessage.
     """
     unmarshaller = self._unmarshal_map[msg_type]
-    msg = unmarshaller(buf, ctx)
-    msg.tag = tag
-    return msg
+    return unmarshaller(buf, ctx)
 
   def Marshal(self, msg, buf, headers):
     """Serialize a message into a stream.

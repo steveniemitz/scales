@@ -38,7 +38,8 @@ class SocketTransportSink(ClientChannelTransportSink):
       'send_time': AggregateTimer,
       'recv_time': AggregateTimer,
       'send_latency': AverageTimer,
-      'recv_latency': AverageTimer
+      'recv_latency': AverageTimer,
+      'transport_latency': AverageTimer
     }
 
   def __init__(self, socket, source):
@@ -55,28 +56,29 @@ class SocketTransportSink(ClientChannelTransportSink):
 
   def _AsyncProcessTransaction(self, data, sink_stack, timeout):
     gtimeout = gevent.Timeout.start_new(timeout) if timeout else NoopTimeout()
-    try:
-      with self._varz.send_time.Measure():
-        with self._varz.send_latency.Measure():
-          self._socket.write(data)
-      self._varz.messages_sent()
+    with self._varz.transport_latency.Measure():
+      try:
+        with self._varz.send_time.Measure():
+          with self._varz.send_latency.Measure():
+            self._socket.write(data)
+        self._varz.messages_sent()
 
-      sz, = unpack('!i', self._socket.readAll(4))
-      with self._varz.recv_time.Measure():
-        with self._varz.recv_latency.Measure():
-          buf = StringIO(self._socket.readAll(sz))
-      self._varz.messages_recv()
+        sz, = unpack('!i', self._socket.readAll(4))
+        with self._varz.recv_time.Measure():
+          with self._varz.recv_latency.Measure():
+            buf = StringIO(self._socket.readAll(sz))
+        self._varz.messages_recv()
 
-      gtimeout.cancel()
-      gevent.spawn(self._ProcessReply, buf, sink_stack)
-    except gevent.Timeout: # pylint: disable=E0712
-      err = TimeoutError()
-      self._socket.close()
-      sink_stack.DispatchReplyMessage(MethodReturnMessage(error=err))
-    except Exception as ex:
-      gtimeout.cancel()
-      self._Shutdown(ex)
-      sink_stack.DispatchReplyMessage(MethodReturnMessage(error=ex))
+        gtimeout.cancel()
+        gevent.spawn(self._ProcessReply, buf, sink_stack)
+      except gevent.Timeout: # pylint: disable=E0712
+        err = TimeoutError()
+        self._socket.close()
+        sink_stack.DispatchReplyMessage(MethodReturnMessage(error=err))
+      except Exception as ex:
+        gtimeout.cancel()
+        self._Shutdown(ex)
+        sink_stack.DispatchReplyMessage(MethodReturnMessage(error=ex))
 
   @staticmethod
   def _ProcessReply(buf, sink_stack):
