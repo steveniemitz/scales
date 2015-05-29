@@ -64,7 +64,7 @@ class GeventMessageTerminatorSink(ReplySink):
     Args:
       msg - The reply message (a MethodReturnMessage).
     """
-    end_time = time.clock()
+    end_time = time.time()
     MessageDispatcher.Varz.request_latency(self._source, end_time - self._start_time)
     if isinstance(msg, MethodReturnMessage):
       if msg.error:

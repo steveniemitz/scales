@@ -7,7 +7,7 @@ import gevent
 from gevent.event import AsyncResult, Event
 from gevent.queue import Queue
 
-from ..core import TimerQueue
+from ..core import GLOBAL_TIMER_QUEUE
 from ..message import (
   Deadline,
   MethodCallMessage,
@@ -112,7 +112,8 @@ class SocketTransportSink(ClientChannelTransportSink):
       'send_time': AggregateTimer,
       'recv_time': AggregateTimer,
       'send_latency': AverageTimer,
-      'recv_latency': AverageTimer
+      'recv_latency': AverageTimer,
+      'transport_latency': AverageTimer
     }
 
   def __init__(self, socket, service):
@@ -242,7 +243,8 @@ class SocketTransportSink(ClientChannelTransportSink):
         queue_len = self._send_queue.qsize()
         self._varz.send_queue_size(queue_len)
         with self._varz.send_time.Measure():
-          self._socket.write(payload)
+          with self._varz.send_latency.Measure():
+            self._socket.write(payload)
         self._varz.messages_sent()
       except Exception as e:
         self._Shutdown(e)
@@ -258,7 +260,8 @@ class SocketTransportSink(ClientChannelTransportSink):
       try:
         sz, = unpack('!i', self._socket.readAll(4))
         with self._varz.recv_time.Measure():
-          buf = StringIO(self._socket.readAll(sz))
+          with self._varz.recv_latency.Measure():
+            buf = StringIO(self._socket.readAll(sz))
         self._varz.messages_recv()
         gevent.spawn(self._ProcessReply, buf)
       except Exception as e:
@@ -273,6 +276,8 @@ class SocketTransportSink(ClientChannelTransportSink):
       elif tag != 0:
         reply_stack = self._ReleaseTag(tag)
         if reply_stack:
+          _, start_time = reply_stack.Pop()
+          self._varz.transport_latency(time.time() - start_time)
           stream.seek(0)
           reply_stack.AsyncProcessResponse(stream)
     except Exception:
@@ -311,6 +316,7 @@ class SocketTransportSink(ClientChannelTransportSink):
       tag = self._tag_pool.get()
       msg.properties[Tag.KEY] = tag
       self._tag_map[tag] = sink_stack
+      sink_stack.Push(None, time.time())
     else:
       tag = 0
 
@@ -382,15 +388,13 @@ class ThrfitMuxMessageSerializerSink(ClientFormatterSink):
 
 
 class TimeoutReplySink(ReplySink):
-  LOG = logging.getLogger("scales.thriftmux.TimeoutReplySink")
-
   def __init__(self, client_sink, msg, next_sink, timeout):
     super(TimeoutReplySink, self).__init__()
     self.next_sink = next_sink
     self._msg = msg
     self._client_sink = client_sink
     self._varz = client_sink._varz
-    self._cancel_timeout = self._client_sink._timer_queue.Schedule(timeout, self._TimeoutHelper)
+    self._cancel_timeout = GLOBAL_TIMER_QUEUE.Schedule(timeout, self._TimeoutHelper)
 
   def ProcessReturnMessage(self, msg):
     self._cancel_timeout()
@@ -403,7 +407,7 @@ class TimeoutReplySink(ReplySink):
     the client is no longer expecting a reply.
     """
     if self.next_sink:
-      self._varz.timeout()
+      self._varz.timeouts()
       error_msg = MethodReturnMessage(error=TimeoutError())
       reply_sink, self.next_sink = self.next_sink, None
       reply_sink.ProcessReturnMessage(error_msg)
@@ -424,7 +428,6 @@ class TimeoutSink(AsyncMessageSink):
   def __init__(self, source):
     super(TimeoutSink, self).__init__()
     self._varz = self.Varz(source)
-    self._timer_queue = TimerQueue()
 
   def AsyncProcessMessage(self, msg, reply_sink):
     """Initialize the timeout handler for this request.

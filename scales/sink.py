@@ -239,6 +239,8 @@ class ClientFormatterSink(AsyncMessageSink, ClientChannelSink):
 
 
 class SinkStack(object):
+  __slots__ = '_stack',
+
   """A stack of sinks."""
   def __init__(self):
     self._stack = deque()
@@ -290,6 +292,8 @@ class TransportSinkStackBuilder(object):
     pass
 
 class ClientChannelSinkStack(SinkStack):
+  __slots__ = '_reply_sink',
+
   """A SinkStack of ClientChannelSinks.
 
   The ClientChannelSinkStack add forwards AsyncProcessResponse to the next sink
