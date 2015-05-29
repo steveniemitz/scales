@@ -105,6 +105,7 @@ class MessageDispatcher(object):
       timeout - The default timeout in seconds for any dispatch messages.
     """
     self._client_stack_builder = client_stack_builder
+    self._message_sink = self._client_stack_builder.CreateSinkStack()
     self._dispatch_timeout = dispatch_timeout
     self._service = service
 
@@ -128,9 +129,8 @@ class MessageDispatcher(object):
     disp_msg = MethodCallMessage(self._service, method, args, kwargs)
     disp_msg.properties[Timeout.KEY] = timeout
 
-    message_sink = self._client_stack_builder.CreateSinkStack()
     source = method, self._service.__module__
-    ar_sink = GeventMessageTerminatorSink(source, time.clock())
+    ar_sink = GeventMessageTerminatorSink(source, time.time())
     self.Varz.dispatch_messages(source)
-    message_sink.AsyncProcessMessage(disp_msg, ar_sink)
+    self._message_sink.AsyncProcessMessage(disp_msg, ar_sink)
     return ar_sink.async_result if ar_sink else None
