@@ -3,10 +3,10 @@
 import sys
 import traceback
 
-class Timeout(object):
-  KEY = "__Timeout"
-
 class Deadline(object):
+  KEY = "__Deadline"
+  EVENT_KEY = "__Deadline_Event"
+
   def __init__(self, timeout):
     """
     Args:
@@ -17,8 +17,9 @@ class Deadline(object):
     self._timeout = long(timeout * 1000000000)
 
 
+class ClientError(Exception): pass
+class FailedFastError(Exception): pass
 class ServerError(Exception): pass
-class ScalesClientError(Exception): pass
 class TimeoutError(Exception):
   def __init__(self):
     super(TimeoutError, self).__init__(

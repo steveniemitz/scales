@@ -5,6 +5,7 @@ from collections import (
   defaultdict,
   deque
 )
+import functools
 import math
 import random
 import time
@@ -29,9 +30,16 @@ class SourceType(object):
 class VarzMetric(object):
   VARZ_TYPE = None
 
+  @staticmethod
+  def _Adapt(fn):
+    def __Adapt(metric, source, amount=1):
+      fn(source, metric, amount)
+    return __Adapt
+
   def __init__(self, metric, source):
     self._metric = metric
     self._source = source
+
     if self.VARZ_TYPE == VarzType.Gauge:
       self._fn = VarzReceiver.SetVarz
     elif self.VARZ_TYPE == VarzType.AverageTimer:
@@ -39,21 +47,13 @@ class VarzMetric(object):
     else:
       self._fn = VarzReceiver.IncrementVarz
 
-  def __call__(self, *args):
-    if self._source and len(args) == 1:
-      source = self._source
-      amount = args[0]
-    elif self._source and len(args) == 0:
-      source = self._source
-      amount = 1
-    elif not self._source and len(args) == 1:
-      source = args[0]
-      amount = 1
-    elif len(args) == 2:
-      source, amount = args
+    if source:
+      self._fn = functools.partial(self._fn, self._source)
     else:
-      raise Exception("Invalid arguments")
-    self._fn(source, self._metric, amount)
+      self._fn = self._Adapt(self._fn)
+
+  def __call__(self, *args):
+    self._fn(self._metric, *args)
 
   def ForSource(self, source):
     return type(self)(self._metric, source)
@@ -74,16 +74,16 @@ class AverageTimer(VarzTimerBase): VARZ_TYPE = VarzType.AverageTimer
 class AggregateTimer(VarzTimerBase): VARZ_TYPE = VarzType.AggregateTimer
 
 class VarzMeta(type):
-  def __init__(cls, name, bases, dct):
-    base_name = cls._VARZ_BASE_NAME
-    source_type = cls._VARZ_SOURCE_TYPE
-    for metric_suffix, varz_cls in cls._VARZ.iteritems():
+  def __new__(mcs, name, bases, dct):
+    base_name = dct['_VARZ_BASE_NAME']
+    source_type = dct.get('_VARZ_SOURCE_TYPE', SourceType.Service)
+    for metric_suffix, varz_cls in dct['_VARZ'].iteritems():
       metric_name = '%s.%s' % (base_name, metric_suffix)
       VarzReceiver.RegisterMetric(metric_name, varz_cls.VARZ_TYPE, source_type)
       varz = varz_cls(metric_name, None)
-      cls._VARZ[metric_suffix] = varz
-      setattr(cls, metric_suffix, varz)
-    super(VarzMeta, cls).__init__(name, bases, dct)
+      dct['_VARZ'][metric_suffix] = varz
+      dct[metric_suffix] = varz
+    return super(VarzMeta, mcs).__new__(mcs, name, bases, dct)
 
 
 class VarzBase(object):
@@ -97,6 +97,9 @@ class VarzBase(object):
       source = source,
     for k, v in self._VARZ.iteritems():
       setattr(self, k, v.ForSource(source))
+
+  def __getattr__(self, item):
+    return self._VARZ[item]
 
 
 class VarzReceiver(object):
@@ -128,7 +131,7 @@ class VarzReceiver(object):
   def _CalculatePercentile(values, pct):
     k = (len(values) - 1) * pct
     f = math.floor(k)
-    c = math.floor(k)
+    c = math.ceil(k)
     if f == c:
       return values[int(k)]
     d0 = values[int(f)] * (c - k)
@@ -179,9 +182,8 @@ class VarzSocketWrapper(object):
       'open_latency': AverageTimer
     }
 
-  def __init__(self, socket, varz_tag, test_connections=False):
+  def __init__(self, socket, varz_tag):
     self._socket = socket
-    self._test_connections = test_connections
     self._varz = self.Varz((varz_tag, '%s:%d' % (self.host, self.port)))
 
   @property
@@ -227,18 +229,5 @@ class VarzSocketWrapper(object):
       if len(chunk) == 0:
         raise EOFError()
     return buff
-
-  def testConnection(self):
-    if not self._test_connections:
-      return True
-
-    from gevent.select import select as gselect
-    import select
-    try:
-      reads, _, _ = gselect([self._socket.handle], [], [], 0)
-      return True
-    except select.error:
-      self._varz.tests_failed()
-      return False
 
 gevent.spawn(VarzReceiver._CalculatePercentiles)

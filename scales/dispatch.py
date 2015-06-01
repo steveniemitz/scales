@@ -2,12 +2,13 @@
 
 import time
 
+import gevent
 from gevent.event import AsyncResult
 
 from .message import (
+  Deadline,
   MethodCallMessage,
   MethodReturnMessage,
-  Timeout,
   TimeoutError
 )
 from .sink import ReplySink
@@ -20,6 +21,7 @@ from .varz import (
 
 class InternalError(Exception): pass
 class ScalesError(Exception):  pass
+class ServiceClosedError(Exception): pass
 
 class GeventMessageTerminatorSink(ReplySink):
   """A ReplySink that converts a Message into an AsyncResult.
@@ -96,7 +98,7 @@ class MessageDispatcher(object):
   def __init__(
         self,
         service,
-        client_stack_builder,
+        message_sink,
         dispatch_timeout=10):
     """
     Args:
@@ -104,8 +106,7 @@ class MessageDispatcher(object):
       client_stack_builder - A ClientMessageSinkStackBuilder
       timeout - The default timeout in seconds for any dispatch messages.
     """
-    self._client_stack_builder = client_stack_builder
-    self._message_sink = self._client_stack_builder.CreateSinkStack()
+    self._message_sink = message_sink
     self._dispatch_timeout = dispatch_timeout
     self._service = service
 
@@ -127,10 +128,12 @@ class MessageDispatcher(object):
     """
     timeout = timeout or self._dispatch_timeout
     disp_msg = MethodCallMessage(self._service, method, args, kwargs)
-    disp_msg.properties[Timeout.KEY] = timeout
+    now = time.time()
+    deadline = now + timeout
+    disp_msg.properties[Deadline.KEY] = deadline
 
     source = method, self._service.__module__
-    ar_sink = GeventMessageTerminatorSink(source, time.time())
     self.Varz.dispatch_messages(source)
-    self._message_sink.AsyncProcessMessage(disp_msg, ar_sink)
+    ar_sink = GeventMessageTerminatorSink(source, time.time())
+    gevent.spawn(self._message_sink.AsyncProcessMessage, disp_msg, ar_sink)
     return ar_sink.async_result if ar_sink else None
