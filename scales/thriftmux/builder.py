@@ -1,8 +1,3 @@
-from weakref import (
-  WeakValueDictionary
-)
-
-from thrift.transport import TTransport
 from thrift.transport import TSocket
 
 from .sink import (
@@ -10,40 +5,41 @@ from .sink import (
     SocketTransportSink,
     TimeoutSink
 )
+
 from ..builder import BaseBuilder
+from ..channel_resurrector import ResurrectorChannelSinkProvider
+from ..loadbalancer import ApertureBalancerChannelSink
+from ..pool import SingletonPoolChannelSinkProvider
 from ..sink import (
   TransportSinkStackBuilder,
   MessageSinkStackBuilder
 )
 from ..varz import VarzSocketWrapper
 
+
 class ThriftMux(BaseBuilder):
   """A builder class for building clients to ThriftMux services."""
   class MessageSinkStackBuilder(MessageSinkStackBuilder):
-    def CreateSinkStack(self, source):
-      sink = TimeoutSink(source)
-      sink.next_sink = ThrfitMuxMessageSerializerSink(source)
-      return sink
+    def CreateSinkStack(self, builder):
+      name = builder.name
+
+      pool_provider = SingletonPoolChannelSinkProvider(ThriftMux.TransportSinkStackBuilder())
+      resurrector = ResurrectorChannelSinkProvider(pool_provider)
+      balancer = ApertureBalancerChannelSink(resurrector, name, builder.server_set_provider)
+
+      prev_sink = TimeoutSink(name)
+      head_sink = prev_sink
+      for sink in [ThrfitMuxMessageSerializerSink(name), balancer]:
+        prev_sink.next_sink = sink
+        prev_sink = sink
+      return head_sink
 
   class TransportSinkStackBuilder(TransportSinkStackBuilder):
-    _MUXERS = WeakValueDictionary()
-
-    def AreTransportsSharable(self):
-      return True
-
     def _CreateSocket(self, host, port):
       return TSocket.TSocket(host, port)
 
-    def CreateSinkStack(self, server, pool_name):
-      key = (server, pool_name)
-      if key in self._MUXERS:
-        sink = self._MUXERS[key]
-      else:
-        sock = self._CreateSocket(server.host, server.port)
-        healthy_sock = VarzSocketWrapper(sock, pool_name)
-        sink = SocketTransportSink(healthy_sock, pool_name)
-        self._MUXERS[key] = sink
+    def CreateSink(self, server, pool_name):
+      sock = self._CreateSocket(server.host, server.port)
+      healthy_sock = VarzSocketWrapper(sock, pool_name)
+      sink = SocketTransportSink(healthy_sock, pool_name)
       return sink
-
-    def IsConnectionFault(self, e):
-      return isinstance(e,  TTransport.TTransportException)

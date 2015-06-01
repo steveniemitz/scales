@@ -2,11 +2,13 @@ from struct import (pack, unpack)
 from cStringIO import StringIO
 
 import gevent
+from thrift.transport import TTransport
 
+from ..constants import ChannelState
 from ..message import (
   MethodCallMessage,
   MethodReturnMessage,
-  ScalesClientError,
+  ClientError,
   Timeout,
   TimeoutError
 )
@@ -45,14 +47,46 @@ class SocketTransportSink(ClientChannelTransportSink):
   def __init__(self, socket, source):
     super(SocketTransportSink, self).__init__()
     self._socket = socket
+    self._state = ChannelState.Idle
     socket_source = '%s:%d' % (self._socket.host, self._socket.port)
     self._varz = self.Varz((source, socket_source))
+    self._processing = None
 
-  def _ShutdownImpl(self):
+  def Open(self):
+    try:
+      self._socket.open()
+    except TTransport.TTransportException:
+      self._Fault('Open failed')
+      raise
+    self._state = ChannelState.Open
+
+  def Close(self):
+    self._state = ChannelState.Closed
     self._socket.close()
+    if self._processing:
+      p, self._processing = self._processing, None
+      p.kill(block=False)
 
-  def _Open(self):
-    self._socket.open()
+  @property
+  def state(self):
+    if self._socket.isOpen():
+      return ChannelState.Open
+    else:
+      return self._state
+
+  def _Fault(self, reason):
+    """Shutdown the sink and signal.
+
+    Args:
+      reason - The reason the shutdown occurred.  May be an exception or string.
+    """
+    if self.state == ChannelState.Closed:
+      return
+
+    self.Close()
+    if not isinstance(reason, Exception):
+      reason = Exception(str(reason))
+    self._on_faulted.Set(reason)
 
   def _AsyncProcessTransaction(self, data, sink_stack, timeout):
     gtimeout = gevent.Timeout.start_new(timeout) if timeout else NoopTimeout()
@@ -70,15 +104,19 @@ class SocketTransportSink(ClientChannelTransportSink):
         self._varz.messages_recv()
 
         gtimeout.cancel()
+        self._processing = None
         gevent.spawn(self._ProcessReply, buf, sink_stack)
       except gevent.Timeout: # pylint: disable=E0712
         err = TimeoutError()
         self._socket.close()
-        sink_stack.DispatchReplyMessage(MethodReturnMessage(error=err))
+        self._socket.open()
+        self._processing = None
+        sink_stack.AsyncProcessResponse(None, MethodReturnMessage(error=err))
       except Exception as ex:
         gtimeout.cancel()
-        self._Shutdown(ex)
-        sink_stack.DispatchReplyMessage(MethodReturnMessage(error=ex))
+        self._Fault(ex)
+        self._processing = None
+        sink_stack.AsyncProcessResponse(None, MethodReturnMessage(error=ex))
 
   @staticmethod
   def _ProcessReply(buf, sink_stack):
@@ -86,21 +124,22 @@ class SocketTransportSink(ClientChannelTransportSink):
       buf.seek(0)
       sink_stack.AsyncProcessResponse(buf)
     except Exception as ex:
-      sink_stack.DispatchReplyMessage(MethodReturnMessage(error=ex))
+      sink_stack.AsyncProcessResponse(None, MethodReturnMessage(error=ex))
 
   def AsyncProcessRequest(self, sink_stack, msg, stream, headers):
+    if self._processing is not None:
+      sink_stack.AsyncProcessResponse(None, MethodReturnMessage(
+        error=Exception('Concurrency violation in AsyncProcessRequest')))
+      return
+
     payload = stream.getvalue()
     sz = pack('!i', len(payload))
-
     timeout = msg.properties.get(Timeout.KEY)
-    gevent.spawn(self._AsyncProcessTransaction, sz + payload, sink_stack, timeout)
-    pass
+    self._processing = gevent.spawn(self._AsyncProcessTransaction, sz + payload, sink_stack, timeout)
 
-  def isOpen(self):
+  @property
+  def isActive(self):
     return self._socket.isOpen()
-
-  def testConnection(self):
-    return self._socket.testConnection()
 
 
 class ThriftFormatterSink(ClientFormatterSink):
@@ -113,7 +152,7 @@ class ThriftFormatterSink(ClientFormatterSink):
 
     if not isinstance(msg, MethodCallMessage):
       reply_sink.ProcessReturnMessage(MethodReturnMessage(
-          error=ScalesClientError('Invalid message type.')))
+          error=ClientError('Invalid message type.')))
     try:
       MessageSerializer.SerializeThriftCall(msg, buf)
       ctx = msg.service, msg.method
@@ -125,9 +164,22 @@ class ThriftFormatterSink(ClientFormatterSink):
     sink_stack.Push(self, ctx)
     self.next_sink.AsyncProcessRequest(sink_stack, msg, buf, headers)
 
-  def AsyncProcessResponse(self, sink_stack, context, stream):
-    try:
-      msg = MessageSerializer.DeserializeThriftCall(stream, context)
-    except Exception as ex:
-      msg = MethodReturnMessage(error=ex)
-    sink_stack.DispatchReplyMessage(msg)
+  def AsyncProcessResponse(self, sink_stack, context, stream, msg):
+    if msg:
+      sink_stack.DispatchReplyMessage(msg)
+    else:
+      try:
+        msg = MessageSerializer.DeserializeThriftCall(stream, context)
+      except Exception as ex:
+        msg = MethodReturnMessage(error=ex)
+      sink_stack.DispatchReplyMessage(msg)
+
+  def Open(self):
+    pass
+
+  def Close(self):
+    pass
+
+  @property
+  def state(self):
+    pass

@@ -35,8 +35,7 @@ class BaseBuilder(object):
     """
     return Scales \
       .newBuilder(Iface) \
-      .setMessageSinkBuilder(self._GetMessageSinkBuilder()) \
-      .setTransportSinkBuilder(self._GetTransportSinkBuilder())
+      .setMessageSinkBuilder(self._GetMessageSinkBuilder())
 
   @classmethod
   def newClient(cls, Iface, uri, timeout=DEFAULT_TIMEOUT):

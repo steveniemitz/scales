@@ -20,6 +20,7 @@ from .varz import (
 
 class InternalError(Exception): pass
 class ScalesError(Exception):  pass
+class ServiceClosedError(Exception): pass
 
 class GeventMessageTerminatorSink(ReplySink):
   """A ReplySink that converts a Message into an AsyncResult.
@@ -96,7 +97,7 @@ class MessageDispatcher(object):
   def __init__(
         self,
         service,
-        client_stack_builder,
+        message_sink,
         dispatch_timeout=10):
     """
     Args:
@@ -104,8 +105,7 @@ class MessageDispatcher(object):
       client_stack_builder - A ClientMessageSinkStackBuilder
       timeout - The default timeout in seconds for any dispatch messages.
     """
-    self._client_stack_builder = client_stack_builder
-    self._message_sink = self._client_stack_builder.CreateSinkStack()
+    self._message_sink = message_sink
     self._dispatch_timeout = dispatch_timeout
     self._service = service
 

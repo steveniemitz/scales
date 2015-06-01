@@ -3,18 +3,11 @@
 import collections
 import functools
 import inspect
-import weakref
 
 from .dispatch import MessageDispatcher
 from .pool import (
-  RoundRobinPoolMemberSelector,
-  SingletonPool,
   StaticServerSetProvider,
-  ZooKeeperServerSetProvider
-)
-from .sink import (
-  ClientFormatterSink,
-  PooledTransportSink,
+  ZooKeeperServerSetProvider,
 )
 from .timer_queue import TimerQueue
 
@@ -123,7 +116,6 @@ class Scales(object):
 
   class ClientBuilder(object):
     """Builder for creating Scales clients."""
-    _POOLS = weakref.WeakValueDictionary()
 
     def __init__(self, Iface):
       self._built = False
@@ -131,68 +123,19 @@ class Scales(object):
       self._name = Iface.__module__
       self._uri_parser = ScalesUriParser()
       self._uri = None
-      self._selector = RoundRobinPoolMemberSelector()
       self._timeout = 10
-      self._initial_size_members = 0
-      self._initial_size_pct = 0
       self._server_set_provider = None
-      self._transport_sink_builder = None
       self._message_sink_builder = None
-      self._pool = None
+      self._load_balancer = None
       self._client_provider = ClientProxyBuilder()
 
-    class ScalesSinkStackBuilder(object):
-      """Creates a full scales message sink stack given an arbitrary
-      message sink stack.  This involves adding a pooling transport sink to the
-      tail of the stack.
-      """
-      def __init__(self, pool, name, message_sink_provider):
-        self._pool = pool
-        self._name = name
-        self._message_sink_provider = message_sink_provider
+    @property
+    def name(self):
+      return self._name
 
-      def CreateSinkStack(self):
-        """Create a sink stack using the given MessageSinkBuilder
-
-        Returns:
-          The head sink in the final stack.
-        """
-        sink_stack = self._message_sink_provider.CreateSinkStack(self._name)
-        head_sink = sink_stack
-        while sink_stack.next_sink:
-          sink_stack = sink_stack.next_sink
-
-        if not isinstance(sink_stack, ClientFormatterSink):
-          raise Exception('The last sink in the message sink chain '
-                          'must be a ClientFormatterSink')
-
-        sink_stack.next_sink = PooledTransportSink(self._pool)
-        return head_sink
-
-    def _CreatePoolKey(self):
-      return (
-        self._name,
-        self._uri,
-        self._server_set_provider.__class__,
-        self._transport_sink_builder.__class__,
-        self._selector.__class__,
-        self._initial_size_members,
-        self._initial_size_pct)
-
-    def _BuildPool(self):
-      key = self._CreatePoolKey()
-      pool = self._POOLS.get(key, None)
-      if not pool:
-        pool = SingletonPool(
-          self._name,
-          self._server_set_provider,
-          self._transport_sink_builder,
-          self._selector,
-          self._initial_size_members,
-          self._initial_size_pct,
-          self._transport_sink_builder.AreTransportsSharable())
-        self._POOLS[key] = pool
-      self._pool = pool
+    @property
+    def server_set_provider(self):
+      return self._server_set_provider
 
     def setUri(self, uri):
       """Sets the URI for this client.
@@ -250,17 +193,6 @@ class Scales(object):
       self._initial_size_pct = size
       return self
 
-    def setTransportSinkBuilder(self, transport_sink_builder):
-      """Sets the transport sink builder.  Transport sink builders are used to
-      process serialized messages.  See sink.py for a full description of
-      transport sinks.
-
-      Args:
-        transport_sink_builder - An instance of a TransportSinkStackBuilder or derived class.
-      """
-      self._transport_sink_builder = transport_sink_builder
-      return self
-
     def setMessageSinkBuilder(self, message_sink_builder):
       """Sets the message sink builder.  Message sink builders are used to
       process messages.  See sink.py for a full description of message sinks.
@@ -291,12 +223,10 @@ class Scales(object):
       Returns:
         A proxy object with all methods of Iface.
       """
-      if not self._pool:
-        self._BuildPool()
-
+      sink_stack = self._message_sink_builder.CreateSinkStack(self)
       dispatcher = MessageDispatcher(
           self._service,
-          self.ScalesSinkStackBuilder(self._pool, self._name, self._message_sink_builder),
+          sink_stack,
           self._timeout)
 
       self._built = True

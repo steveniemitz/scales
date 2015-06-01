@@ -128,7 +128,7 @@ class VarzReceiver(object):
   def _CalculatePercentile(values, pct):
     k = (len(values) - 1) * pct
     f = math.floor(k)
-    c = math.floor(k)
+    c = math.ceil(k)
     if f == c:
       return values[int(k)]
     d0 = values[int(f)] * (c - k)
