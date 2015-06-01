@@ -1,7 +1,8 @@
 from .base import (
-  RoundRobinPoolMemberSelector,
   ServerSetProvider,
-  SingletonPool,
   StaticServerSetProvider,
   ZooKeeperServerSetProvider,
 )
+
+from .singleton import SingletonPoolChannelSinkProvider
+from .watermark import WatermarkPoolChannelSinkProvider

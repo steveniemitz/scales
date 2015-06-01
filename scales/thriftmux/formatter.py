@@ -53,7 +53,7 @@ class MessageSerializer(object):
   @staticmethod
   def _Marshal_Tdiscarded(msg, buf, headers):
     headers[Headers.MessageType] = MessageType.Tdiscarded
-    buf.write(pack('!BBB', *Tag(msg.which.properties[Tag.KEY]).Encode()))
+    buf.write(pack('!BBB', *Tag(msg.which).Encode()))
     buf.write(msg.reason)
     return None,
 

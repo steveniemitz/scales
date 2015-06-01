@@ -172,8 +172,8 @@ class ServerSet(object):
       on_leave - An optional function to call when members leave the node.
     """
     def noop(*args, **kwargs): pass
-    self.LOG = ROOT_LOG.getChild('[%s]' % zk_path)
-    self.LOG.info('TellApart ServerSet intializing on path %s' % zk_path)
+    self._log = ROOT_LOG.getChild('[%s]' % zk_path)
+    self._log.info('TellApart ServerSet intializing on path %s' % zk_path)
 
     if not isinstance(zk, KazooClient):
       raise TypeError('zk must be an instance of a KazooClient')
@@ -243,7 +243,7 @@ class ServerSet(object):
     """Begins watching the ZK path for node changes.
     """
     if not self._zk.exists(self._zk_path):
-      self.LOG.warn('Path %s does not exist, waiting for it to be created.'
+      self._log.warn('Path %s does not exist, waiting for it to be created.'
                % self._zk_path)
 
     # Data changed will notify node on creation / deletion via
@@ -259,7 +259,7 @@ class ServerSet(object):
       self._begin_watch()
 
   def _begin_watch(self):
-    self.LOG.info('Beginning to watch path %s' % self._zk_path)
+    self._log.info('Beginning to watch path %s' % self._zk_path)
     ChildrenWatch(self._zk, self._zk_path, self._on_set_changed)
 
   def _send_all_removed(self):
@@ -281,14 +281,14 @@ class ServerSet(object):
         new_members = self._zk_nodes_to_members(new_nodes)
         self._members.update(((m.name, m) for m in new_members))
 
-        self.LOG.debug("Raising notifications for %i members joining and %i members leaving."
+        self._log.debug("Raising notifications for %i members joining and %i members leaving."
                  % (len(new_nodes), len(removed_nodes)))
 
         for m in new_members:
           try:
             self._on_join(m)
           except Exception:
-            self.LOG.exception('Error in OnJoin callback.')
+            self._log.exception('Error in OnJoin callback.')
 
         for m in removed_nodes:
           removed_member = self._members.pop(m, None)
@@ -296,11 +296,11 @@ class ServerSet(object):
             try:
               self._on_leave(removed_member)
             except Exception:
-              self.LOG.exception('Error in OnLeave callback.')
+              self._log.exception('Error in OnLeave callback.')
           else:
-            self.LOG.warn('Member %s was not found in cached set' % str(m))
+            self._log.warn('Member %s was not found in cached set' % str(m))
       except Exception:
-        self.LOG.exception('Error in notification worker.')
+        self._log.exception('Error in notification worker.')
 
   def _on_set_changed(self, children):
     """Called when the children of the watched ZK node change.
@@ -314,5 +314,5 @@ class ServerSet(object):
     self._nodes = children
     new_nodes = children - current_nodes
     removed_nodes = current_nodes - children
-    self.LOG.debug("Queueing notifications")
+    self._log.debug("Queueing notifications")
     self._notification_queue.put((new_nodes, removed_nodes))

@@ -1,8 +1,5 @@
 from .core import Scales
-from .sink import (
-  MessageSinkStackBuilder,
-  TransportSinkStackBuilder
-)
+from .sink import MessageSinkStackBuilder
 
 class BaseBuilder(object):
   """Base builder helper class for Scales services.
@@ -10,21 +7,15 @@ class BaseBuilder(object):
   Builder wrap creating a client for a specific service type.
   This includes configuring sinks, setting a timeout, etc.
   """
-  DEFAULT_TIMEOUT = 5
+  DEFAULT_TIMEOUT = 10
 
   class MessageSinkStackBuilder(MessageSinkStackBuilder):
-    def __init__(self): raise NotImplementedError()
-
-  class TransportSinkStackBuilder(TransportSinkStackBuilder):
     def __init__(self): raise NotImplementedError()
 
   def _GetMessageSinkBuilder(self):
     return self.MessageSinkStackBuilder()
 
-  def _GetTransportSinkBuilder(self):
-    return self.TransportSinkStackBuilder()
-
-  def configure(self, Iface):
+  def Configure(self, Iface):
     """Configure a Scales client for the given interface.
 
     Args:
@@ -34,12 +25,11 @@ class BaseBuilder(object):
       A scales builder configured for the service.
     """
     return Scales \
-      .newBuilder(Iface) \
-      .setMessageSinkBuilder(self._GetMessageSinkBuilder()) \
-      .setTransportSinkBuilder(self._GetTransportSinkBuilder())
+      .NewBuilder(Iface) \
+      .SetMessageSinkBuilder(self._GetMessageSinkBuilder())
 
   @classmethod
-  def newClient(cls, Iface, uri, timeout=DEFAULT_TIMEOUT):
+  def NewClient(cls, Iface, uri, timeout=DEFAULT_TIMEOUT):
     """Create a new client for a Thrift service.
 
     Args:
@@ -50,7 +40,7 @@ class BaseBuilder(object):
     Returns:
       A proxy implementing all thrift methods of Iface.
     """
-    return cls().configure(Iface) \
-      .setUri(uri) \
-      .setTimeout(timeout) \
-      .build()
+    return cls().Configure(Iface) \
+      .SetUri(uri) \
+      .SetTimeout(timeout) \
+      .Build()

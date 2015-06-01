@@ -20,6 +20,10 @@ class TimerQueue(object):
       if not any(self._queue):
         self._event.wait()
       self._event.clear()
+      # A sleep here is needed to work around a bug with gevent.
+      # If the event is cleared and then immediately waited on, the wait will
+      # completed instantly and report it timed out.
+      gevent.sleep(0)
 
       # Peek the head of the queue
       at, peeked_seq, cancelled = self._PeekNext()
@@ -54,16 +58,15 @@ class TimerQueue(object):
   def _PeekNext(self):
     return self._queue[0][:3]
 
-  def Schedule(self, duration, action, *args, **kwargs):
+  def Schedule(self, deadline, action, *args, **kwargs):
     if action is None:
       raise Exception("action must be non-null")
 
-    at = time.time() + duration
     if self._resolution:
-      at = round(at / self._resolution) * self._resolution
+      deadline = round(deadline / self._resolution) * self._resolution
 
     self._seq += 1
-    timeout_args = [at, self._seq, False, action, args, kwargs]
+    timeout_args = [deadline, self._seq, False, action, args, kwargs]
     def cancel():
       timeout_args[2] = True
       # Null out 3-5 to avoid holding onto references.
@@ -73,6 +76,8 @@ class TimerQueue(object):
 
     heapq.heappush(self._queue, timeout_args)
     # Wake up the waiter thread if this is now the newest
-    if self._queue[0][0] == at:
+    if self._queue[0][0] == deadline:
       self._event.set()
     return cancel
+
+GLOBAL_TIMER_QUEUE = TimerQueue()

@@ -1,12 +1,11 @@
 class Enum(object): pass
 
-class DispatcherState(Enum):
-  UNINITIALIZED = 0
-  STARTING = 1
-  RUNNING = 2
-  SHUTTING_DOWN = 3
-  STOPPED = 4
-  FAULTED = 5
-  PING_TIMEOUT = 6
+class ChannelState(object):
+  Idle = 1
+  Open = 2
+  Busy = 4
+  Closed = 3
 
-  DRAINING = 10
+class Int(object):
+  MaxValue = 2147483647
+  MinValue = -2147483648
