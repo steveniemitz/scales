@@ -5,7 +5,6 @@ import time
 from .heap import HeapBalancerChannelSink
 from ..constants import ChannelState
 from ..varz import (
-  Counter,
   Gauge,
   SourceType,
   VarzBase
@@ -93,7 +92,7 @@ class ApertureBalancerChannelSink(HeapBalancerChannelSink):
       new_channel, = random.sample(self._idle_channels, 1)
       self._idle_channels.discard(new_channel)
       if new_channel.state != ChannelState.Closed:
-        self.LOG.info('Expanding aperture.')
+        self._log.debug('Expanding aperture.')
         self._active_channels.add(new_channel)
         super(ApertureBalancerChannelSink, self)._AddNode(new_channel)
         break
@@ -101,7 +100,7 @@ class ApertureBalancerChannelSink(HeapBalancerChannelSink):
 
   def _ContractAperture(self):
     if len(self._active_channels) > 1:
-      self.LOG.info('Contracting aperture')
+      self._log.debug('Contracting aperture')
       rnd_channel, = random.sample(self._active_channels, 1)
       self._active_channels.discard(rnd_channel)
       self.__varz.size(len(self._active_channels))

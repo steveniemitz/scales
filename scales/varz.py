@@ -5,8 +5,10 @@ from collections import (
   defaultdict,
   deque
 )
+import functools
 import math
 import random
+import types
 import time
 
 import gevent
@@ -32,6 +34,7 @@ class VarzMetric(object):
   def __init__(self, metric, source):
     self._metric = metric
     self._source = source
+
     if self.VARZ_TYPE == VarzType.Gauge:
       self._fn = VarzReceiver.SetVarz
     elif self.VARZ_TYPE == VarzType.AverageTimer:
@@ -39,21 +42,11 @@ class VarzMetric(object):
     else:
       self._fn = VarzReceiver.IncrementVarz
 
+    if source:
+      self._fn = functools.partial(self._fn, self._source)
+
   def __call__(self, *args):
-    if self._source and len(args) == 1:
-      source = self._source
-      amount = args[0]
-    elif self._source and len(args) == 0:
-      source = self._source
-      amount = 1
-    elif not self._source and len(args) == 1:
-      source = args[0]
-      amount = 1
-    elif len(args) == 2:
-      source, amount = args
-    else:
-      raise Exception("Invalid arguments")
-    self._fn(source, self._metric, amount)
+    self._fn(self._metric, *args)
 
   def ForSource(self, source):
     return type(self)(self._metric, source)

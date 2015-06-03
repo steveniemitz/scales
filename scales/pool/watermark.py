@@ -55,7 +55,7 @@ class WatermarkPoolChannelSink(PoolChannelSink):
     self._state = ChannelState.Open
     socket_name = '%s:%s' % (endpoint.host, endpoint.port)
     self._varz = self.Varz((name, socket_name))
-    self.LOG = self.ROOT_LOG.getChild('[%s.%s]' % (name, socket_name))
+    self._log = self.ROOT_LOG.getChild('[%s.%s]' % (name, socket_name))
     self._varz.min_size(min_size)
     self._varz.max_size(max_size)
     super(WatermarkPoolChannelSink, self).__init__(name, endpoint, sink_provider)

@@ -54,34 +54,20 @@ class HeapBalancerChannelSink(LoadBalancerChannelSink):
   Zero = Int.MinValue + 1
 
   class Node(object):
-    __slots__ = ('_array', 'downq', 'avg_load', 'channel')
+    __slots__ = ('load', 'index', 'downq', 'avg_load', 'channel')
 
     def __init__(self, channel, load, index):
-      self._array = [None, None]
       self.channel = channel
       self.avg_load = 0
       self.load = load
       self.index = index
       self.downq = None
 
-    @property
-    def load(self):
-      return self._array[0]
-
-    @load.setter
-    def load(self, value):
-      self._array[0] = value
-
-    @property
-    def index(self):
-      return self._array[1]
-
-    @index.setter
-    def index(self, value):
-      self._array[1] = value
-
     def __lt__(self, other):
-      return self._array < other._array
+      if self.load < other.load:
+        return True
+      else:
+        return self.index < other.index
 
   def __init__(self, next_sink_provider, service_name, server_set_provider):
     self._heap = [self.Node(FailingChannelSink(NoMembersError), self.Zero, 0)]
@@ -112,26 +98,6 @@ class HeapBalancerChannelSink(LoadBalancerChannelSink):
     context()
     sink_stack.AsyncProcessResponse(stream, msg)
 
-  def __Put(self, n):
-    n.load -= 1
-    if n.load < self.Zero:
-      self.LOG.warning('Decrementing load below Zero')
-    if n.index < 0:
-      pass
-    elif n.load == self.Zero and self._size > 1:
-      i = n.index
-      Heap.swap(self._heap, i, self._size)
-      Heap.fixDown(self._heap, i, self._size - 1)
-
-      j = random.randint(1, self._size)
-      Heap.swap(self._heap, j, self._size)
-      Heap.fixUp(self._heap, j)
-
-      Heap.fixUp(self._heap, self._size)
-    else:
-      Heap.fixUp(self._heap, n.index)
-    self._OnPut(n)
-
 # Events overridable by subclasses
   def _OnNodeDown(self, node):
     pass
@@ -151,12 +117,15 @@ class HeapBalancerChannelSink(LoadBalancerChannelSink):
       m = None
       while n is not None:
         if n.index < 0:
+          # The node has been discarded.
           n = n.downq
           if m is None:
             self._downq = n
           else:
             m.downq = n
         elif n.channel.state <= ChannelState.Open:
+          # The node was resurrected, mark it back up
+          self._log.info('Marking node %s down' % n)
           n.load -= self.Penalty
           Heap.fixUp(self._heap, n.index)
           o = n.downq
@@ -167,13 +136,14 @@ class HeapBalancerChannelSink(LoadBalancerChannelSink):
           else:
             m.downq = n
         else:
+          # No change, move to the next node in the linked list
           m, n = n, n.downq
 
       n = self._heap[1]
       if n.channel.state <= ChannelState.Open or n.load >= 0:
         return n
       else:
-        self.LOG.warning('Marking node %s down' % n)
+        self._log.warning('Marking node %s down' % n)
         # Node is now down
         n.downq = self._downq
         self._downq = n
@@ -181,6 +151,26 @@ class HeapBalancerChannelSink(LoadBalancerChannelSink):
         Heap.fixDown(self._heap, 1, self._size)
         self._OnNodeDown(n)
         # Loop
+
+  def __Put(self, n):
+    n.load -= 1
+    if n.load < self.Zero:
+      self._log.warning('Decrementing load below Zero')
+    if n.index < 0:
+      pass
+    elif n.load == self.Zero and self._size > 1:
+      i = n.index
+      Heap.swap(self._heap, i, self._size)
+      Heap.fixDown(self._heap, i, self._size - 1)
+
+      j = random.randint(1, self._size)
+      Heap.swap(self._heap, j, self._size)
+      Heap.fixUp(self._heap, j)
+
+      Heap.fixUp(self._heap, self._size)
+    else:
+      Heap.fixUp(self._heap, n.index)
+    self._OnPut(n)
 
   def _AddNode(self, channel):
     channel.Open()

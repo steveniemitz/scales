@@ -272,9 +272,6 @@ class ClientChannelSinkStack(SinkStack):
 
   def AsyncProcessResponse(self, stream, msg=None):
     next_sink, next_ctx = self.Pop()
-    if next_sink is None:
-      print "Thats not right"
-
     next_sink.AsyncProcessResponse(self, next_ctx, stream, msg)
 
   @property

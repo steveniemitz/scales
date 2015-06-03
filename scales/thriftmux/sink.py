@@ -62,7 +62,7 @@ class TagPool(object):
     self._next = 1
     self._max_tag = max_tag
     self._varz = self.Varz((service, host))
-    self.LOG = self.POOL_LOGGER.getChild('[%s.%s]' % (service, host))
+    self._log = self.POOL_LOGGER.getChild('[%s.%s]' % (service, host))
 
   def get(self):
     """Get a tag from the pool.
@@ -79,7 +79,7 @@ class TagPool(object):
         raise Exception("No tags left in pool.")
       self._next += 1
       ret_tag = self._next
-      self.LOG.debug('Allocating new tag, max is now %d' % ret_tag)
+      self._log.debug('Allocating new tag, max is now %d' % ret_tag)
       self._varz.max_tag(ret_tag)
       return ret_tag
     else:
@@ -92,7 +92,7 @@ class TagPool(object):
       tag - The previously leased tag.
     """
     if tag in self._set:
-      self.LOG.warning('Tag %d has been returned more than once!' % tag)
+      self._log.warning('Tag %d has been returned more than once!' % tag)
     self._set.add(tag)
 
 
@@ -124,7 +124,7 @@ class SocketTransportSink(ClientChannelTransportSink):
     self._ping_msg = self._BuildHeader(1, MessageType.Tping, 0)
     self._last_ping_start = 0
     self._state = ChannelState.Idle
-    self.LOG = self.SINK_LOG.getChild('[%s.%s:%d]' % (
+    self._log = self.SINK_LOG.getChild('[%s.%s:%d]' % (
         service, self._socket.host, self._socket.port))
     self._socket_source = '%s:%d' % (self._socket.host, self._socket.port)
     self._service = service
@@ -163,20 +163,20 @@ class SocketTransportSink(ClientChannelTransportSink):
     self._Init()
     self._open_result = AsyncResult()
     try:
-      self.LOG.debug('Opening transport.')
+      self._log.debug('Opening transport.')
       self._socket.open()
       self._greenlets.append(gevent.spawn(self._RecvLoop))
       self._greenlets.append(gevent.spawn(self._SendLoop))
 
       ar = self._SendPingMessage()
       ar.get()
-      self.LOG.debug('Open and ping successful')
+      self._log.debug('Open and ping successful')
       self._greenlets.append(gevent.spawn(self._PingLoop))
       self._state = ChannelState.Open
       self._open_result.set()
       self._varz.active(1)
     except Exception as e:
-      self.LOG.error('Exception opening socket')
+      self._log.error('Exception opening socket')
       self._open_result.set_exception(e)
       self._Shutdown('Open failed')
       raise
@@ -189,7 +189,7 @@ class SocketTransportSink(ClientChannelTransportSink):
       return
 
     self._state = ChannelState.Closed
-    self.LOG.warning('Shutting down transport [%s].' % str(reason))
+    self._log.warning('Shutting down transport [%s].' % str(reason))
     self._varz.active(-1)
     self._socket.close()
     [g.kill(block=False) for g in self._greenlets]
@@ -211,7 +211,7 @@ class SocketTransportSink(ClientChannelTransportSink):
   def _SendPingMessage(self):
     """Constucts and sends a Tping message.
     """
-    self.LOG.debug('Sending ping message.')
+    self._log.debug('Sending ping message.')
     self._ping_ar = AsyncResult()
     self._last_ping_start = time.time()
     self._send_queue.put(self._ping_msg)
@@ -231,9 +231,9 @@ class SocketTransportSink(ClientChannelTransportSink):
     if msg_type == MessageType.Rping:
       ar.set()
       ping_duration = time.time() - self._last_ping_start
-      self.LOG.debug('Got ping response in %d ms' % int(ping_duration * 1000))
+      self._log.debug('Got ping response in %d ms' % int(ping_duration * 1000))
     else:
-      self.LOG.error('Unexpected response for tag 1 (msg_type was %d)' % msg_type)
+      self._log.error('Unexpected response for tag 1 (msg_type was %d)' % msg_type)
       ar.set_exception(Exception("Invalid ping response"))
 
   def _PingLoop(self):
@@ -286,7 +286,7 @@ class SocketTransportSink(ClientChannelTransportSink):
 
   def _ProcessReply(self, stream):
     try:
-      msg_type, tag = ThrfitMuxMessageSerializerSink.ReadHeader(stream)
+      msg_type, tag = ThriftMuxMessageSerializerSink.ReadHeader(stream)
       if tag == 1 and msg_type == MessageType.Rping: #Ping
         self._OnPingResponse(msg_type, stream)
       elif tag != 0:
@@ -298,7 +298,7 @@ class SocketTransportSink(ClientChannelTransportSink):
           stream.seek(0)
           reply_stack.AsyncProcessResponse(stream, None)
     except Exception:
-      self.LOG.exception('Exception processing reply message.')
+      self._log.exception('Exception processing reply message.')
 
   def _ReleaseTag(self, tag):
     """Return a tag to the tag pool.
@@ -342,7 +342,7 @@ class SocketTransportSink(ClientChannelTransportSink):
     self._send_queue.put(payload)
 
 
-class ThrfitMuxMessageSerializerSink(ClientFormatterSink):
+class ThriftMuxMessageSerializerSink(ClientFormatterSink):
   class Varz(VarzBase):
     _VARZ_BASE_NAME = 'scales.thriftmux.ThrfitMuxMessageSerializerSink'
     _VARZ = {
@@ -351,7 +351,7 @@ class ThrfitMuxMessageSerializerSink(ClientFormatterSink):
     }
 
   def __init__(self, varz_source):
-    super(ThrfitMuxMessageSerializerSink, self).__init__()
+    super(ThriftMuxMessageSerializerSink, self).__init__()
     self._serializer = MessageSerializer()
     self._varz = self.Varz(varz_source)
 
@@ -398,7 +398,7 @@ class ThrfitMuxMessageSerializerSink(ClientFormatterSink):
       sink_stack.DispatchReplyMessage(msg)
     else:
       try:
-        msg_type, tag = ThrfitMuxMessageSerializerSink.ReadHeader(stream)
+        msg_type, tag = ThriftMuxMessageSerializerSink.ReadHeader(stream)
         msg = self._serializer.Unmarshal(tag, msg_type, stream, context)
       except Exception as ex:
         self._varz.deserialization_failures()

@@ -1,7 +1,7 @@
 from thrift.transport import TSocket
 
 from .sink import (
-    ThrfitMuxMessageSerializerSink,
+    ThriftMuxMessageSerializerSink,
     SocketTransportSink,
     TimeoutSink
 )
@@ -29,7 +29,7 @@ class ThriftMux(BaseBuilder):
 
       prev_sink = TimeoutSink(name)
       head_sink = prev_sink
-      for sink in [ThrfitMuxMessageSerializerSink(name), balancer]:
+      for sink in [ThriftMuxMessageSerializerSink(name), balancer]:
         prev_sink.next_sink = sink
         prev_sink = sink
       return head_sink

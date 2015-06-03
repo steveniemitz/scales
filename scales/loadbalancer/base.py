@@ -11,7 +11,7 @@ class NoMembersError(Exception): pass
 class LoadBalancerChannelSink(ClientChannelSink):
   def __init__(self, next_sink_provider, service_name, server_set_provider):
     log_name = self.__class__.__name__.replace('ChannelSink', '')
-    self.LOG = ROOT_LOG.getChild('%s.[%s]' % (log_name, service_name))
+    self._log = ROOT_LOG.getChild('%s.[%s]' % (log_name, service_name))
     self._init_done = Event()
     self._service_name = service_name
     self._server_set_provider = server_set_provider
@@ -40,7 +40,7 @@ class LoadBalancerChannelSink(ClientChannelSink):
           instance.service_endpoint,
           self._service_name)
       self._servers[instance.service_endpoint] = channel
-      self.LOG.info("Instance %s joined (%d members)" % (instance.service_endpoint, len(self._servers)))
+      self._log.info("Instance %s joined (%d members)" % (instance.service_endpoint, len(self._servers)))
       self._OnServersChanged((instance, channel), True)
 
   def _RemoveServer(self, instance):
@@ -53,7 +53,6 @@ class LoadBalancerChannelSink(ClientChannelSink):
     channel = self._servers.pop(instance.service_endpoint, None)
     self._OnServersChanged((instance, channel), False)
 
-  ## ------- ZooKeeper methods --------
   def _OnServerSetJoin(self, instance):
     """Invoked when an instance joins the cluster (in ZooKeeper).
 
@@ -83,8 +82,7 @@ class LoadBalancerChannelSink(ClientChannelSink):
     self._init_done.wait()
     self._RemoveServer(instance)
 
-    self.LOG.info("Instance left (%d members)" % len(self._servers))
-    ## ------- /ZooKeeper methods --------
+    self._log.info("Instance left (%d members)" % len(self._servers))
 
   def AsyncProcessResponse(self, sink_stack, context, stream, msg):
     raise Exception("This should never be called.")

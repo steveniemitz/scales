@@ -10,7 +10,7 @@ ROOT_LOG = logging.getLogger('scales.Resurrector')
 
 class ResurrectorChannelSink(ClientChannelSink):
   def __init__(self, next_factory, endpoint, name):
-    self.LOG = ROOT_LOG.getChild('[%s.%s:%s]' % (name, endpoint.host, endpoint.port))
+    self._log = ROOT_LOG.getChild('[%s.%s:%s]' % (name, endpoint.host, endpoint.port))
     self._endpoint = endpoint
     self._name = name
     self._next_factory = next_factory
@@ -36,7 +36,7 @@ class ResurrectorChannelSink(ClientChannelSink):
 
   def _TryResurrect(self):
     wait_interval = 5
-    self.LOG.info('Attempting to reopen faulted channel')
+    self._log.info('Attempting to reopen faulted channel')
     while True:
       if self._close_event.wait(wait_interval):
         # The channel was closed, exit the loop
@@ -48,7 +48,7 @@ class ResurrectorChannelSink(ClientChannelSink):
         sink.on_faulted.Subscribe(self._OnSinkClosed)
         self.next_sink = sink
         self._resurrecting = False
-        self.LOG.info('Reopened channel.')
+        self._log.info('Reopened channel.')
         return
       except:
         sink.Close()

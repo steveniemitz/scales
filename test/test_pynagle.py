@@ -1,6 +1,6 @@
 from __future__ import print_function
 
-from collections import defaultdict
+from collections import defaultdict, Counter
 
 import logging
 import random
@@ -21,6 +21,8 @@ from test.gen_py.example_rpc_service import ExampleService
 from test.gen_py.example_rpc_service import ttypes
 monkey.patch_all(thread=False)
 
+import GreenletProfiler
+
 class ServiceMetric(object):
   def __init__(self):
     self.success = 0
@@ -39,15 +41,32 @@ class ServiceMetric(object):
     self.request_latency_99 = 0.0
     self.request_latency_num = 0
 
+last_dct = defaultdict(int)
+
 def dump_greenlets():
+  stats = GreenletProfiler.get_func_stats()
+  stats.sort('tsub')
+  stats.print_all()
+  return
+
+  global last_dct
   import gc
   import traceback
   from greenlet import greenlet
 
   gc.collect()
+  objs = gc.get_objects()
+
+  dct = defaultdict(int)
+
+  for o in objs:
+    dct[type(o)] += 1
 
   print("------------ %d objects -----------" % len(gc.get_objects()))
+  for k,v in sorted(dct.items(), key=lambda i: -i[1]):
+    print('%40s -> %d [%d]' % (k.__name__, v, v - last_dct[k]))
 
+  last_dct = dct
   for ob in gc.get_objects():
     if isinstance(ob, SingletonPoolChannelSink):
       print('Found sink %d' % id(ob))
@@ -150,6 +169,9 @@ if __name__ == '__main__':
   def fn():
     from gen_py.scribe import scribe
     from gen_py.scribe.ttypes import LogEntry
+
+    GreenletProfiler.set_clock_type('cpu')
+    GreenletProfiler.start()
 
     client = ThriftMux.newClient(ExampleService.Iface, 'tcp://localhost:8080,localhost:8082')
     ret = client.passMessage(ttypes.Message('hi!'))
