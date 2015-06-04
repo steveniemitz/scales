@@ -19,7 +19,19 @@ from scales.timer_queue import TimerQueue
 
 from test.gen_py.example_rpc_service import ExampleService
 from test.gen_py.example_rpc_service import ttypes
-monkey.patch_all(thread=False)
+
+from thrift.transport import TSocket
+
+from scales.future import Future
+
+import greenlet
+
+def greenlet_trace(event, args):
+  if event == 'switch':
+    origin, target = args
+    return
+
+greenlet.settrace(greenlet_trace)
 
 import GreenletProfiler
 
@@ -44,10 +56,10 @@ class ServiceMetric(object):
 last_dct = defaultdict(int)
 
 def dump_greenlets():
-  stats = GreenletProfiler.get_func_stats()
-  stats.sort('tsub')
-  stats.print_all()
-  return
+  #stats = GreenletProfiler.get_func_stats()
+  #stats.sort('tsub')
+  #stats.print_all()
+  #return
 
   global last_dct
   import gc
@@ -81,6 +93,15 @@ def dump_greenlets():
 
 if __name__ == '__main__':
   logging.basicConfig(level='DEBUG')
+
+  def test_future():
+    f = Future\
+      .StartNew(lambda : "test")\
+      .Success(lambda f: f.result + ' test2')\
+      .Success(lambda f: print(f.result))
+    f.Wait()
+
+  #test_future()
 
   def dumpVarz(varz=VarzReceiver.VARZ_DATA):
     print('-----------------------')
@@ -212,8 +233,8 @@ if __name__ == '__main__':
     while True:
       e.wait(10)
       #aggVarz()
-      #dumpVarz()
-      dump_greenlets()
+      dumpVarz()
+      #dump_greenlets()
       #dumpVarz(VarzReceiver.VARZ_DATA_PERCENTILES)
 
   fn()

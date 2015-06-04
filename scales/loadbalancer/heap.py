@@ -1,14 +1,12 @@
 import random
 
 from .base import (
-  LoadBalancerChannelSink,
+  LoadBalancer,
   NoMembersError
 )
 from ..constants import (Int, ChannelState)
-from ..sink import (
-  FailingChannelSink,
-  ReplySink,
-)
+from ..sink import FailingChannelSink
+from ..future import Future
 
 
 class Heap(object):
@@ -36,20 +34,17 @@ class Heap(object):
         break
 
 
-class ChannelReplyWrapper(ReplySink):
-  __slots__ = '_putter',
-
+class ChannelWrapper(object):
   def __init__(self, wrapped, putter):
-    super(ReplySink, self).__init__()
-    self.next_sink = wrapped
+    self._wrapped = wrapped
+    self._called = False
     self._putter = putter
 
-  def ProcessReturnMessage(self, msg):
-    self._putter()
-    self.next_sink.ProcessReturnMessage(msg)
+  def __call__(self, *args, **kwargs):
+    return self._wrapped(args, kwargs).Always(self._putter)
 
 
-class HeapBalancerChannelSink(LoadBalancerChannelSink):
+class HeapBalancer(LoadBalancer):
   Penalty = Int.MaxValue
   Zero = Int.MinValue + 1
 
@@ -73,9 +68,9 @@ class HeapBalancerChannelSink(LoadBalancerChannelSink):
     self._heap = [self.Node(FailingChannelSink(NoMembersError), self.Zero, 0)]
     self._downq = None
     self._size = 0
-    super(HeapBalancerChannelSink, self).__init__(next_sink_provider, service_name, server_set_provider)
+    super(HeapBalancer, self).__init__(next_sink_provider, service_name, server_set_provider)
 
-  def AsyncProcessRequest(self, sink_stack, msg, stream, headers):
+  def __call__(self, msg, stream, headers):
     if self._size == 0:
       return self._heap[0].channel
     else:
@@ -84,19 +79,11 @@ class HeapBalancerChannelSink(LoadBalancerChannelSink):
       Heap.fixDown(self._heap, n.index, self._size)
       self._OnGet(n)
       put_called = [False]
-      def PutWrapper():
+      def PutWrapper(_):
         if not put_called[0]:
           put_called[0] = True
           self.__Put(n)
-
-      reply_sink = ChannelReplyWrapper(sink_stack.reply_sink, PutWrapper)
-      sink_stack.reply_sink = reply_sink
-      sink_stack.Push(self, PutWrapper)
-      n.channel.AsyncProcessRequest(sink_stack, msg, stream, headers)
-
-  def AsyncProcessResponse(self, sink_stack, context, stream, msg):
-    context()
-    sink_stack.AsyncProcessResponse(stream, msg)
+      return n.channel(msg, stream, headers).Always(PutWrapper)
 
 # Events overridable by subclasses
   def _OnNodeDown(self, node):
@@ -125,7 +112,7 @@ class HeapBalancerChannelSink(LoadBalancerChannelSink):
             m.downq = n
         elif n.channel.state <= ChannelState.Open:
           # The node was resurrected, mark it back up
-          self._log.info('Marking node %s down' % n)
+          self._log.info('Marking node %s up' % n)
           n.load -= self.Penalty
           Heap.fixUp(self._heap, n.index)
           o = n.downq
@@ -157,6 +144,7 @@ class HeapBalancerChannelSink(LoadBalancerChannelSink):
     if n.load < self.Zero:
       self._log.warning('Decrementing load below Zero')
     if n.index < 0:
+      # Node has already been marked down.
       pass
     elif n.load == self.Zero and self._size > 1:
       i = n.index
@@ -196,12 +184,12 @@ class HeapBalancerChannelSink(LoadBalancerChannelSink):
     else:
       self._RemoveNode(channel)
 
-  def Open(self):
-    pass
+  def Open(self, force=False):
+    return Future.FromResult(True)
 
   def Close(self):
-    [n.channel.Close() for n in self._heap]
+    return Future.WhenAll([n.channel.Close() for n in self._heap])
 
   @property
   def state(self):
-    pass
+    return min([n.channel.state for n in self._heap[1:]])

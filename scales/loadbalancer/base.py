@@ -2,13 +2,13 @@ import logging
 
 from gevent.event import Event
 
-from ..sink import ClientChannelSink
+from ..sink import ServiceFactory
 
 ROOT_LOG = logging.getLogger("scales.loadbalancer")
 
 class NoMembersError(Exception): pass
 
-class LoadBalancerChannelSink(ClientChannelSink):
+class LoadBalancer(ServiceFactory):
   def __init__(self, next_sink_provider, service_name, server_set_provider):
     log_name = self.__class__.__name__.replace('ChannelSink', '')
     self._log = ROOT_LOG.getChild('%s.[%s]' % (log_name, service_name))
@@ -23,7 +23,7 @@ class LoadBalancerChannelSink(ClientChannelSink):
     self._servers = {}
     [self._AddServer(m) for m in server_set]
     self._init_done.set()
-    super(LoadBalancerChannelSink, self).__init__()
+    super(LoadBalancer, self).__init__()
 
   def _OnServersChanged(self, instance, added):
     pass
@@ -84,5 +84,3 @@ class LoadBalancerChannelSink(ClientChannelSink):
 
     self._log.info("Instance left (%d members)" % len(self._servers))
 
-  def AsyncProcessResponse(self, sink_stack, context, stream, msg):
-    raise Exception("This should never be called.")

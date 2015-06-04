@@ -1,4 +1,4 @@
-from thrift.transport import TSocket
+from ..thrift.socket import TSocket
 
 from .sink import (
     ThriftMuxMessageSerializerSink,
@@ -8,7 +8,7 @@ from .sink import (
 
 from ..builder import BaseBuilder
 from ..channel_resurrector import ResurrectorChannelSinkProvider
-from ..loadbalancer import ApertureBalancerChannelSink
+from ..loadbalancer import ApertureBalancer
 from ..pool import SingletonPoolChannelSinkProvider
 from ..sink import (
   TransportSinkStackBuilder,
@@ -25,7 +25,7 @@ class ThriftMux(BaseBuilder):
 
       pool_provider = SingletonPoolChannelSinkProvider(ThriftMux.TransportSinkStackBuilder())
       resurrector = ResurrectorChannelSinkProvider(pool_provider)
-      balancer = ApertureBalancerChannelSink(resurrector, name, builder.server_set_provider)
+      balancer = ApertureBalancer(resurrector, name, builder.server_set_provider)
 
       prev_sink = TimeoutSink(name)
       head_sink = prev_sink

@@ -8,7 +8,6 @@ from collections import (
 import functools
 import math
 import random
-import types
 import time
 
 import gevent
@@ -31,6 +30,12 @@ class SourceType(object):
 class VarzMetric(object):
   VARZ_TYPE = None
 
+  @staticmethod
+  def _Adapt(fn):
+    def __Adapt(metric, source, amount=1):
+      fn(source, metric, amount)
+    return __Adapt
+
   def __init__(self, metric, source):
     self._metric = metric
     self._source = source
@@ -44,6 +49,8 @@ class VarzMetric(object):
 
     if source:
       self._fn = functools.partial(self._fn, self._source)
+    else:
+      self._fn = self._Adapt(self._fn)
 
   def __call__(self, *args):
     self._fn(self._metric, *args)
@@ -67,16 +74,17 @@ class AverageTimer(VarzTimerBase): VARZ_TYPE = VarzType.AverageTimer
 class AggregateTimer(VarzTimerBase): VARZ_TYPE = VarzType.AggregateTimer
 
 class VarzMeta(type):
-  def __init__(cls, name, bases, dct):
-    base_name = cls._VARZ_BASE_NAME
-    source_type = cls._VARZ_SOURCE_TYPE
-    for metric_suffix, varz_cls in cls._VARZ.iteritems():
+  def __new__(cls, name, bases, dct):
+    base_name = dct['_VARZ_BASE_NAME']
+    source_type = dct.get('_VARZ_SOURCE_TYPE', SourceType.Service)
+    for metric_suffix, varz_cls in dct['_VARZ'].iteritems():
       metric_name = '%s.%s' % (base_name, metric_suffix)
       VarzReceiver.RegisterMetric(metric_name, varz_cls.VARZ_TYPE, source_type)
       varz = varz_cls(metric_name, None)
-      cls._VARZ[metric_suffix] = varz
-      setattr(cls, metric_suffix, varz)
-    super(VarzMeta, cls).__init__(name, bases, dct)
+      dct['_VARZ'][metric_suffix] = varz
+      dct[metric_suffix] = varz
+      #setattr(cls, metric_suffix, varz)
+    return super(VarzMeta, cls).__new__(cls, name, bases, dct)
 
 
 class VarzBase(object):
@@ -84,6 +92,9 @@ class VarzBase(object):
   _VARZ = {}
   _VARZ_BASE_NAME = None
   _VARZ_SOURCE_TYPE = SourceType.Service
+
+  def __getattr__(self, item):
+    return self._VARZ[item]
 
   def __init__(self, source):
     if not isinstance(source, tuple):

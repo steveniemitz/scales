@@ -1,52 +1,44 @@
 import logging
 
-from gevent.event import Event
 import gevent
 
 from .constants import ChannelState
-from .sink import ClientChannelSink
+from .future import Future
 
 ROOT_LOG = logging.getLogger('scales.Resurrector')
 
-class ResurrectorChannelSink(ClientChannelSink):
+class ConnectionResurrector(object):
   def __init__(self, next_factory, endpoint, name):
     self._log = ROOT_LOG.getChild('[%s.%s:%s]' % (name, endpoint.host, endpoint.port))
     self._endpoint = endpoint
     self._name = name
     self._next_factory = next_factory
-    self._close_event = Event()
+    self._resurrector = None
     self._resurrecting = False
-    super(ResurrectorChannelSink, self).__init__()
+    self._next = None
+    super(ConnectionResurrector, self).__init__()
 
-  def AsyncProcessRequest(self, sink_stack, msg, stream, headers):
-    self.next_sink.AsyncProcessRequest(sink_stack, msg, stream, headers)
-
-  def AsyncProcessResponse(self, sink_stack, context, stream, msg):
-    raise NotImplementedError("This should never be called")
+  def __call__(self, *args, **kwargs):
+    return self._next(*args, **kwargs)
 
   def _OnSinkClosed(self, val):
     if not self._resurrecting:
       self._resurrecting = True
-      sink, self.next_sink = self.next_sink, None
+      sink, self._next = self._next, None
       sink.Close()
       sink.on_faulted.Unsubscribe(self._OnSinkClosed)
-
-      gevent.spawn(self._TryResurrect)
+      self._resurrector = gevent.spawn(self._TryResurrect)
     self.on_faulted.Set(val)
 
   def _TryResurrect(self):
     wait_interval = 5
     self._log.info('Attempting to reopen faulted channel')
     while True:
-      if self._close_event.wait(wait_interval):
-        # The channel was closed, exit the loop
-        return
-
       sink = self._next_factory.CreateSink(self._endpoint, self._name)
       try:
         sink.Open(True)
         sink.on_faulted.Subscribe(self._OnSinkClosed)
-        self.next_sink = sink
+        self._next = sink
         self._resurrecting = False
         self._log.info('Reopened channel.')
         return
@@ -58,23 +50,25 @@ class ResurrectorChannelSink(ClientChannelSink):
         wait_interval = 60
 
   def Open(self, force=False):
-    if not self.next_sink:
-      self.next_sink = self._next_factory.CreateSink(self._endpoint, self._name)
-      self.next_sink.on_faulted.Subscribe(self._OnSinkClosed)
+    if not self._next:
+      self._next = self._next_factory.CreateSink(self._endpoint, self._name)
+      self._next.on_faulted.Subscribe(self._OnSinkClosed)
+    return Future.FromResult(True)
 
   def Close(self):
-    self._close_event.set()
-    self.next_sink.on_faulted.Unsubscribe(self._OnSinkClosed)
-    self.next_sink.Close()
+    if self._resurrector:
+      self._resurrector.kill()
+    self._next.on_faulted.Unsubscribe(self._OnSinkClosed)
+    return self._next.Close()
 
   @property
   def state(self):
     if self._resurrecting:
       return ChannelState.Closed
-    elif not self.next_sink:
+    elif not self._next:
       return ChannelState.Idle
     else:
-      return self.next_sink.state
+      return self._next.state
 
 
 class ResurrectorChannelSinkProvider(object):
@@ -82,4 +76,4 @@ class ResurrectorChannelSinkProvider(object):
     self._next_provider = next_provider
 
   def CreateSink(self, endpoint, name):
-    return ResurrectorChannelSink(self._next_provider, endpoint, name)
+    return ConnectionResurrector(self._next_provider, endpoint, name)

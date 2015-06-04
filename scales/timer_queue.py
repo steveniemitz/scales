@@ -20,6 +20,10 @@ class TimerQueue(object):
       if not any(self._queue):
         self._event.wait()
       self._event.clear()
+      # A sleep here is needed to work around a bug with gevent.
+      # If the event is cleared and then immediately waited on, the wait will
+      # completed instantly and report it timed out.
+      gevent.sleep(0)
 
       # Peek the head of the queue
       at, peeked_seq, cancelled = self._PeekNext()

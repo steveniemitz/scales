@@ -9,6 +9,7 @@ from gevent.queue import Queue
 
 from ..constants import ChannelState
 from ..core import GLOBAL_TIMER_QUEUE
+from ..future import Future
 from ..message import (
   Deadline,
   MethodCallMessage,
@@ -183,6 +184,7 @@ class SocketTransportSink(ClientChannelTransportSink):
 
   def Close(self):
     self._Shutdown('Close invoked', False)
+    return Future.FromResult(True)
 
   def _Shutdown(self, reason, fault=True):
     if not self.isActive:
@@ -296,7 +298,7 @@ class SocketTransportSink(ClientChannelTransportSink):
           props[Tag.KEY] = None
           self._varz.transport_latency(time.time() - start_time)
           stream.seek(0)
-          reply_stack.AsyncProcessResponse(stream, None)
+          reply_stack.SetResult(stream)
     except Exception:
       self._log.exception('Exception processing reply message.')
 
@@ -329,17 +331,23 @@ class SocketTransportSink(ClientChannelTransportSink):
                 *self._EncodeTag(tag))
 
   def AsyncProcessRequest(self, sink_stack, msg, stream, headers):
+    pass
+
+  def __call__(self, msg, stream, headers):
     if not msg.is_one_way:
       tag = self._tag_pool.get()
       msg.properties[Tag.KEY] = tag
-      self._tag_map[tag] = (sink_stack, time.time(), msg.properties)
+      f = Future()
+      self._tag_map[tag] = (f, time.time(), msg.properties)
     else:
+      f = Future.FromResult(None)
       tag = 0
 
     data_len = stream.tell()
     header = self._BuildHeader(tag, headers[Headers.MessageType], data_len)
     payload = header + stream.getvalue()
     self._send_queue.put(payload)
+    return f
 
 
 class ThriftMuxMessageSerializerSink(ClientFormatterSink):
@@ -381,34 +389,25 @@ class ThriftMuxMessageSerializerSink(ClientFormatterSink):
       reply_sink.ProcessReturnMessage(msg)
       return
 
+    ret = self.next_sink(msg, buf, headers)
     if msg.is_one_way:
-      one_way_reply_sink, reply_sink = reply_sink, None
+      pass
     else:
-      one_way_reply_sink = None
+      ret.Always(self._ProcessResponse, ctx, reply_sink)
 
-    sink_stack = ClientChannelSinkStack(reply_sink)
-    sink_stack.Push(self, ctx)
-    self.next_sink.AsyncProcessRequest(sink_stack, msg, buf, headers)
-    # The call is one way, so ignore the response.
-    if one_way_reply_sink:
-      one_way_reply_sink.ProcessReturnMessage(MethodReturnMessage())
-
-  def AsyncProcessResponse(self, sink_stack, context, stream, msg):
-    if msg:
-      sink_stack.DispatchReplyMessage(msg)
+  def _ProcessResponse(self, ar, ctx, reply_sink):
+    stream_or_message = ar.result
+    if isinstance(stream_or_message, MethodReturnMessage):
+      reply_sink.ProcessReturnMessage(stream_or_message)
     else:
       try:
-        msg_type, tag = ThriftMuxMessageSerializerSink.ReadHeader(stream)
-        msg = self._serializer.Unmarshal(tag, msg_type, stream, context)
+        msg_type, tag = ThriftMuxMessageSerializerSink.ReadHeader(stream_or_message)
+        msg = self._serializer.Unmarshal(tag, msg_type, ar.result, ctx)
       except Exception as ex:
         self._varz.deserialization_failures()
         msg = MethodReturnMessage(error=ex)
-      sink_stack.DispatchReplyMessage(msg)
+      reply_sink.ProcessReturnMessage(msg)
 
-  def Open(self): pass
-  def Close(self): pass
-  @property
-  def state(self): pass
 
 class TimeoutReplySink(ReplySink):
   def __init__(self, client_sink, msg, next_sink, timeout):

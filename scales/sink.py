@@ -44,6 +44,7 @@ from collections import deque
 
 from .observable import Observable
 from .message import MethodReturnMessage
+from .future import Future
 
 class MessageSink(object):
   """A base class for all message sinks.
@@ -173,7 +174,7 @@ class ClientChannelTransportSink(ClientChannelSink):
     raise Exception("This should never be called.")
 
 
-class ClientFormatterSink(AsyncMessageSink, ClientChannelSink):
+class ClientFormatterSink(AsyncMessageSink):
   """ClientFormatterSinks bridge a AsyncMessageSink and ClientChannelSink.
 
   They are the final AsyncMessageSink in the message sink chain, and the first
@@ -182,11 +183,6 @@ class ClientFormatterSink(AsyncMessageSink, ClientChannelSink):
   """
   def __init__(self):
     super(ClientFormatterSink, self).__init__()
-
-  def AsyncProcessRequest(self, sink_stack, msg, stream, headers):
-    """Since ClientFormatterSinks are the first sink in the client channel sink
-    chain, they should never have AsyncProcessRequest called on them."""
-    raise Exception('This should never be called.')
 
 
 class SinkStack(object):
@@ -292,6 +288,21 @@ class FailingChannelSink(ClientChannelSink):
     raise NotImplementedError("This should never be called")
 
   def Open(self): pass
-  def Close(self): pass
+  def Close(self):
+    return Future.FromResult(True)
   @property
   def state(self): pass
+
+
+class ServiceFactory(object):
+  __metaclass__ = ABCMeta
+
+  @abstractmethod
+  def Open(self, force=False): pass
+  def Close(self): pass
+  @abstractproperty
+  def state(self): pass
+
+  @abstractmethod
+  def __call__(self, *args, **kwargs):
+    pass

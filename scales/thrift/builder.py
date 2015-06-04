@@ -1,7 +1,7 @@
 from thrift.transport import TSocket
 
 from ..channel_resurrector import ResurrectorChannelSinkProvider
-from ..loadbalancer import (ApertureBalancerChannelSink, HeapBalancerChannelSink)
+from ..loadbalancer import ApertureBalancer
 from ..pool import WatermarkPoolChannelSinkProvider
 
 
@@ -29,6 +29,6 @@ class Thrift(BaseBuilder):
       formatter = ThriftFormatterSink(name)
       pool_provider = WatermarkPoolChannelSinkProvider(Thrift.TransportSinkStackBuilder())
       resurrector = ResurrectorChannelSinkProvider(pool_provider)
-      balancer = ApertureBalancerChannelSink(resurrector, name, builder.server_set_provider)
+      balancer = ApertureBalancer(resurrector, name, builder.server_set_provider)
       formatter.next_sink = balancer
       return formatter

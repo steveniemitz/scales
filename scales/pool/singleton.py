@@ -1,5 +1,6 @@
 from ..constants import ChannelState
 from .base import PoolChannelSink
+from ..future import Future
 
 class SingletonPoolChannelSink(PoolChannelSink):
   def __init__(self, name, endpoint, sink_provider):
@@ -9,14 +10,18 @@ class SingletonPoolChannelSink(PoolChannelSink):
   def Open(self, force=False):
     self._ref_count += 1
     if force:
-      self._Get()
+      return self._Get()
+    else:
+      return Future.FromResult(True)
 
   def Close(self):
     self. _ref_count -= 1
     if self.next_sink and self._ref_count <= 0:
       sink, self.next_sink = self.next_sink, None
       sink.on_faulted.Unsubscribe(self.__PropagateShutdown)
-      sink.Close()
+      return sink.Close()
+    else:
+      return Future.FromResult(True)
 
   @property
   def state(self):

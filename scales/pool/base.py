@@ -99,6 +99,10 @@ class PoolChannelSink(ClientChannelSink):
     self._sink_provider = sink_provider
     super(PoolChannelSink, self).__init__()
 
+  def __call__(self, *args, **kwargs):
+    next_sink = self._Get()
+    return next_sink(*args, **kwargs).Always(self._Release)
+
   @abstractmethod
   def _Get(self):
     raise NotImplementedError()
