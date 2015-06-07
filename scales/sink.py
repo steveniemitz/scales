@@ -42,6 +42,7 @@ from collections import deque
 
 from gevent.event import Event
 
+from .constants import (ChannelState, SinkProperties)
 from .observable import Observable
 from .message import (
   Deadline,
@@ -78,43 +79,7 @@ class MessageSink(object):
     self._next = value
 
 
-class ReplySink(MessageSink):
-  """ReplySinks are MessageSinks for processing the asynchronous return message
-  from a AsyncProcessRequest."""
-  def __init__(self):
-    super(ReplySink, self).__init__()
-
-  @abstractmethod
-  def ProcessReturnMessage(self, msg):
-    """Performs processing on msg.
-
-    Implementors should then call next_sink.ProcessReturnMessage(msg).
-
-    Args:
-      msg - The message to process.
-    """
-    raise NotImplementedError()
-
-
-class AsyncMessageSink(MessageSink):
-  """AsyncMessageSinks take a message, perform processing, and forward it to the
-  next sink in the chain (next_sink).
-  """
-  def __init__(self):
-    super(AsyncMessageSink, self).__init__()
-
-  @abstractmethod
-  def AsyncProcessMessage(self, msg, reply_sink):
-    """Perform processing on a message.
-
-    Args:
-      msg - The message to process.
-      reply_sink - A ReplySink that will receive the response message.
-    """
-    raise NotImplementedError()
-
-
-class ClientChannelSink(MessageSink):
+class ClientMessageSink(MessageSink):
   """ClientChannelSinks take a message, stream, and headers and perform
   processing on them.
   """
@@ -122,23 +87,23 @@ class ClientChannelSink(MessageSink):
 
   def __init__(self):
     self._on_faulted = Observable()
-    super(ClientChannelSink, self).__init__()
+    super(ClientMessageSink, self).__init__()
 
-  @abstractproperty
+  @property
   def state(self):
-    pass
+    return self.next_sink.state
 
   @property
   def on_faulted(self):
     return self._on_faulted
 
-  @abstractmethod
   def Open(self, force=False):
-    raise NotImplementedError()
+    if self.next_sink:
+      self.next_sink.Open()
 
-  @abstractmethod
   def Close(self):
-    raise NotImplementedError()
+    if self.next_sink:
+      self.next_sink.Close()
 
   @abstractmethod
   def AsyncProcessRequest(self, sink_stack, msg, stream, headers):
@@ -170,36 +135,6 @@ class ClientChannelSink(MessageSink):
     raise NotImplementedError()
 
 
-class ClientChannelTransportSink(ClientChannelSink):
-  """ClientChannelTransportSinks represent the last sink in the chain.
-
-  They are responsible for sending the serialized message to a remote server and
-  receiving the response.
-  """
-
-  def AsyncProcessResponse(self, sink_stack, context, stream, msg):
-    """AsyncProcessResponse should never be called on ClientChannelTransportSinks,
-    as they are the sink responsible for handling the response.
-    """
-    raise Exception("This should never be called.")
-
-
-class ClientFormatterSink(AsyncMessageSink, ClientChannelSink):
-  """ClientFormatterSinks bridge a AsyncMessageSink and ClientChannelSink.
-
-  They are the final AsyncMessageSink in the message sink chain, and the first
-  ClientChannelSink in the channel sink chain.  Therefor, they take a message,
-  serialize it to a wire format, then hand it off to the channel sink chain.
-  """
-  def __init__(self):
-    super(ClientFormatterSink, self).__init__()
-
-  def AsyncProcessRequest(self, sink_stack, msg, stream, headers):
-    """Since ClientFormatterSinks are the first sink in the client channel sink
-    chain, they should never have AsyncProcessRequest called on them."""
-    raise Exception('This should never be called.')
-
-
 class SinkStack(object):
   """A stack of sinks."""
   __slots__ = '_stack',
@@ -223,124 +158,78 @@ class SinkStack(object):
   def Pop(self):
     return self._stack.pop()
 
-
-class MessageSinkStackBuilder(object):
-  """A factory class responsible for creating a sink chain.
-  """
-  __metaclass__ = ABCMeta
-
-  @abstractmethod
-  def CreateSinkStack(self, builder):
-    """Create set of message sinks.
-
-    Args:
-      name - The name of the service requesting the sinks.
-    Returns:
-      The head of the message sink chain.
-    """
-    raise NotImplementedError()
+  def Any(self):
+    return any(self._stack)
 
 
-class ClientChannelSinkStack(SinkStack):
+class ClientMessageSinkStack(SinkStack):
   """A SinkStack of ClientChannelSinks.
 
   The ClientChannelSinkStack add forwards AsyncProcessResponse to the next sink
   on the stack, or DispatchReplyMessage to the reply sink.
   """
-  __slots__ = '_reply_sink',
 
-  def __init__(self, reply_sink):
+  def __init__(self):
     """
     Args:
       reply_sink - An optional ReplySink.
     """
-    super(ClientChannelSinkStack, self).__init__()
-    self._reply_sink = reply_sink
+    super(ClientMessageSinkStack, self).__init__()
 
-  @property
-  def reply_sink(self):
-    return self._reply_sink
+  def AsyncProcessResponse(self, stream, msg):
+    if self.Any():
+      next_sink, next_ctx = self.Pop()
+      next_sink.AsyncProcessResponse(self, next_ctx, stream, msg)
 
-  @reply_sink.setter
-  def reply_sink(self, value):
-    self._reply_sink = value
+  def AsyncProcessResponseStream(self, stream):
+    self.AsyncProcessResponse(stream, None)
 
-  def DispatchReplyMessage(self, msg):
-    """If a reply sink was supplied, calls ProcessReturnMessage on it.
-
-    Args:
-      msg - The message to dispatch.
-    """
-    if self._reply_sink:
-      self._reply_sink.ProcessReturnMessage(msg)
-
-  def AsyncProcessResponse(self, stream, msg=None):
-    next_sink, next_ctx = self.Pop()
-    next_sink.AsyncProcessResponse(self, next_ctx, stream, msg)
-
-  @property
-  def is_one_way(self):
-    return self._reply_sink is None
+  def AsyncProcessResponseMessage(self, msg):
+    self.AsyncProcessResponse(None, msg)
 
 
-class FailingChannelSink(ClientChannelSink):
+class FailingMessageSink(ClientMessageSink):
   """A sink that always returns a failure message."""
 
   def __init__(self, ex):
     self._ex = ex
-    super(FailingChannelSink, self).__init__()
+    super(FailingMessageSink, self).__init__()
 
   def AsyncProcessRequest(self, sink_stack, msg, stream, headers):
     msg = MethodReturnMessage(error=self._ex())
-    sink_stack.AsyncProcessResponse(None, msg)
+    sink_stack.AsyncProcessResponseMessage(msg)
 
   def AsyncProcessResponse(self, sink_stack, context, stream, msg):
     raise NotImplementedError("This should never be called")
 
-  def Open(self): pass
-  def Close(self): pass
   @property
-  def state(self): pass
+  def state(self):
+    return ChannelState.Open
 
 
-class TimeoutReplySink(ReplySink):
-  def __init__(self, client_sink, evt, next_sink, deadline):
-    super(TimeoutReplySink, self).__init__()
-    self.next_sink = next_sink
-    self._event = evt
-    self._varz = client_sink._varz
-    self._cancel_timeout = GLOBAL_TIMER_QUEUE.Schedule(deadline, self._TimeoutHelper)
-
-  def ProcessReturnMessage(self, msg):
-    self._cancel_timeout()
-    if self.next_sink:
-      self.next_sink.ProcessReturnMessage(msg)
-
-  def _TimeoutHelper(self):
-    """Waits for ar to be signaled or [timeout] seconds to elapse.  If the
-    timeout elapses, a Tdiscarded message will be queued to the server indicating
-    the client is no longer expecting a reply.
-    """
-    self._event.set()
-    if self.next_sink:
-      self._varz.timeouts()
-      error_msg = MethodReturnMessage(error=TimeoutError())
-      reply_sink, self.next_sink = self.next_sink, None
-      reply_sink.ProcessReturnMessage(error_msg)
-
-
-class TimeoutSink(AsyncMessageSink):
+class ClientTimeoutSink(ClientMessageSink):
   class Varz(VarzBase):
-    _VARZ_BASE_NAME = 'scales.thriftmux.TimeoutSink'
+    _VARZ_BASE_NAME = 'scales.TimeoutSink'
     _VARZ = {
       'timeouts': Counter
     }
 
-  def __init__(self, source):
-    super(TimeoutSink, self).__init__()
-    self._varz = self.Varz(source)
+  def __init__(self, next_provider, properties):
+    super(ClientTimeoutSink, self).__init__()
+    self.next_sink = next_provider.CreateSink(properties)
+    self._varz = self.Varz(properties[SinkProperties.Service])
 
-  def AsyncProcessMessage(self, msg, reply_sink):
+  def _TimeoutHelper(self, evt, sink_stack):
+    """Waits for ar to be signaled or [timeout] seconds to elapse.  If the
+    timeout elapses, a Tdiscarded message will be queued to the server indicating
+    the client is no longer expecting a reply.
+    """
+    evt.Set(True)
+    self._varz.timeouts()
+    error_msg = MethodReturnMessage(error=TimeoutError())
+    sink_stack.AsyncProcessResponseMessage(error_msg)
+
+  def AsyncProcessRequest(self, sink_stack, msg, stream, headers):
     """Initialize the timeout handler for this request.
 
     Args:
@@ -350,10 +239,15 @@ class TimeoutSink(AsyncMessageSink):
     """
     deadline = msg.properties.get(Deadline.KEY)
     if deadline and isinstance(msg, MethodCallMessage):
-      evt = Event()
+      evt = Observable()
       msg.properties[Deadline.EVENT_KEY] = evt
-      reply_sink = TimeoutReplySink(self, evt, reply_sink, deadline)
-    return self.next_sink.AsyncProcessMessage(msg, reply_sink)
+      cancel_timeout = GLOBAL_TIMER_QUEUE.Schedule(deadline, lambda: self._TimeoutHelper(evt, sink_stack))
+      sink_stack.Push(self, cancel_timeout)
+    return self.next_sink.AsyncProcessRequest(sink_stack, msg, stream, headers)
+
+  def AsyncProcessResponse(self, sink_stack, context, stream, msg):
+    context()
+    sink_stack.AsyncProcessResponse(stream, msg)
 
 
 class ChannelSinkProviderBase(object):
@@ -363,9 +257,12 @@ class ChannelSinkProviderBase(object):
     self.next_provider = None
 
   @abstractmethod
-  def CreateSink(self, endpoint, name, properties):
+  def CreateSink(self, properties):
     pass
 
+  @abstractproperty
+  def sink_class(self):
+    pass
 
 def ChannelSinkProvider(sink_cls):
   class _ChannelSinkProvider(ChannelSinkProviderBase):
@@ -373,6 +270,13 @@ def ChannelSinkProvider(sink_cls):
     __metaclass__ = ABCMeta
     SINK_CLASS = sink_cls
 
-    def CreateSink(self, endpoint, name, properties):
-      return self.SINK_CLASS(self.next_provider, endpoint, name, properties)
+    def CreateSink(self, properties):
+      return self.SINK_CLASS(self.next_provider, properties)
+
+    @property
+    def sink_class(self):
+      return self.SINK_CLASS
   return _ChannelSinkProvider
+
+
+TimeoutSinkProvider = ChannelSinkProvider(ClientTimeoutSink)

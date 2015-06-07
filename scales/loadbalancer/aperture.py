@@ -2,8 +2,9 @@ import math
 import random
 import time
 
-from .heap import HeapBalancerChannelSink
-from ..constants import ChannelState
+from .heap import HeapBalancerSink
+from ..constants import (ChannelState, SinkProperties)
+from ..sink import ChannelSinkProvider
 from ..varz import (
   Gauge,
   SourceType,
@@ -39,7 +40,7 @@ class Ema(object):
     return self._ema
 
 
-class ApertureBalancerChannelSink(HeapBalancerChannelSink):
+class ApertureBalancerSink(HeapBalancerSink):
   class ApertureVarz(VarzBase):
     _VARZ_BASE_NAME = 'scales.pool.ApertureBalancer'
     _VARZ_SOURCE_TYPE = SourceType.Service
@@ -49,7 +50,7 @@ class ApertureBalancerChannelSink(HeapBalancerChannelSink):
       'load_average': Gauge
     }
 
-  def __init__(self, next_sink_provider, service_name, server_set_provider):
+  def __init__(self, next_provider, properties):
     self._idle_channels = set()
     self._active_channels = set()
     self._total = 0
@@ -58,8 +59,9 @@ class ApertureBalancerChannelSink(HeapBalancerChannelSink):
     self._min_size = 1
     self._min_load = 0.5
     self._max_load = 2
+    service_name = properties[SinkProperties.Service]
     self.__varz = self.ApertureVarz(service_name)
-    super(ApertureBalancerChannelSink, self).__init__(next_sink_provider, service_name, server_set_provider)
+    super(ApertureBalancerSink, self).__init__(next_provider, properties)
     self.Open()
 
   def _UpdateSizeVarz(self):
@@ -69,13 +71,13 @@ class ApertureBalancerChannelSink(HeapBalancerChannelSink):
   def _AddNode(self, channel):
     if not any(self._active_channels):
       self._active_channels.add(channel)
-      super(ApertureBalancerChannelSink, self)._AddNode(channel)
+      super(ApertureBalancerSink, self)._AddNode(channel)
     else:
       self._idle_channels.add(channel)
     self._UpdateSizeVarz()
 
   def _RemoveNode(self, channel):
-    super(ApertureBalancerChannelSink, self)._RemoveNode(channel)
+    super(ApertureBalancerSink, self)._RemoveNode(channel)
     if channel in self._active_channels:
       self._active_channels.discard(channel)
       self._TryExpandAperture()
@@ -94,7 +96,7 @@ class ApertureBalancerChannelSink(HeapBalancerChannelSink):
       if new_channel.state != ChannelState.Closed:
         self._log.debug('Expanding aperture.')
         self._active_channels.add(new_channel)
-        super(ApertureBalancerChannelSink, self)._AddNode(new_channel)
+        super(ApertureBalancerSink, self)._AddNode(new_channel)
         break
     self._UpdateSizeVarz()
 
@@ -105,7 +107,7 @@ class ApertureBalancerChannelSink(HeapBalancerChannelSink):
       self._active_channels.discard(rnd_channel)
       self.__varz.size(len(self._active_channels))
       self._idle_channels.add(rnd_channel)
-      super(ApertureBalancerChannelSink, self)._RemoveNode(rnd_channel)
+      super(ApertureBalancerSink, self)._RemoveNode(rnd_channel)
       self._UpdateSizeVarz()
 
   def _OnGet(self, node):
@@ -124,3 +126,5 @@ class ApertureBalancerChannelSink(HeapBalancerChannelSink):
       self._TryExpandAperture()
     elif aperture_load <= self._min_load and aperture_size > self._min_size:
       self._ContractAperture()
+
+ApertureBalancerChannelSinkProvider = ChannelSinkProvider(ApertureBalancerSink)

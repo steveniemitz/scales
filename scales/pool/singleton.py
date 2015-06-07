@@ -1,12 +1,12 @@
+from .base import PoolSink
 from ..constants import ChannelState
 from ..sink import ChannelSinkProvider
-from .base import PoolChannelSink
 
 
-class SingletonPoolChannelSink(PoolChannelSink):
-  def __init__(self, sink_provider, endpoint, name, properties):
+class SingletonPoolSink(PoolSink):
+  def __init__(self, sink_provider, properties):
+    super(SingletonPoolSink, self).__init__(sink_provider, properties)
     self._ref_count = 0
-    super(SingletonPoolChannelSink, self).__init__(sink_provider, endpoint, name, properties)
 
   def Open(self, force=False):
     self._ref_count += 1
@@ -32,7 +32,7 @@ class SingletonPoolChannelSink(PoolChannelSink):
 
   def _Get(self):
     if not self.next_sink:
-      self.next_sink = self._sink_provider.CreateSink(self._endpoint, self._name, None)
+      self.next_sink = self._sink_provider.CreateSink(self._properties)
       self.next_sink.on_faulted.Subscribe(self.__PropagateShutdown)
       self.next_sink.Open()
       return self.next_sink
@@ -47,4 +47,4 @@ class SingletonPoolChannelSink(PoolChannelSink):
     pass
 
 
-SingletonPoolChannelSinkProvider = ChannelSinkProvider(SingletonPoolChannelSink)
+SingletonPoolChannelSinkProvider = ChannelSinkProvider(SingletonPoolSink)

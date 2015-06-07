@@ -1,5 +1,5 @@
+from .constants import SinkProperties
 from .core import Scales
-from .sink import MessageSinkStackBuilder
 
 class BaseBuilder(object):
   """Base builder helper class for Scales services.
@@ -9,11 +9,17 @@ class BaseBuilder(object):
   """
   DEFAULT_TIMEOUT = 10
 
-  class MessageSinkStackBuilder(MessageSinkStackBuilder):
-    def __init__(self): raise NotImplementedError()
+  class SinkProvider(object):
+    _PROVIDERS = []
 
-  def _GetMessageSinkBuilder(self):
-    return self.MessageSinkStackBuilder()
+    def CreateProvider(self):
+      providers = [p() for p in self._PROVIDERS]
+      for n, p in enumerate(providers[:-1]):
+        p.next_provider = providers[n+1]
+      return providers[0]
+
+  def _GetSinkProvider(self):
+    return self.SinkProvider()
 
   def Configure(self, Iface):
     """Configure a Scales client for the given interface.
@@ -26,7 +32,7 @@ class BaseBuilder(object):
     """
     return Scales \
       .NewBuilder(Iface) \
-      .SetMessageSinkBuilder(self._GetMessageSinkBuilder())
+      .SetSinkProvider(self._GetSinkProvider())
 
   @classmethod
   def NewClient(cls, Iface, uri, timeout=DEFAULT_TIMEOUT):

@@ -10,8 +10,9 @@ import gevent
 from gevent import monkey
 from gevent.event import Event
 
+from scales.core import Scales
 from scales.thriftmux import ThriftMux
-from scales.pool.singleton import SingletonPoolChannelSink
+from scales.pool.singleton import SingletonPoolSink
 from scales.thrift import Thrift
 from scales.varz import (SourceType, VarzReceiver)
 
@@ -20,8 +21,6 @@ from scales.timer_queue import TimerQueue
 from test.gen_py.example_rpc_service import ExampleService
 from test.gen_py.example_rpc_service import ttypes
 monkey.patch_all(thread=False)
-
-import GreenletProfiler
 
 class ServiceMetric(object):
   def __init__(self):
@@ -68,7 +67,7 @@ def dump_greenlets():
 
   last_dct = dct
   for ob in gc.get_objects():
-    if isinstance(ob, SingletonPoolChannelSink):
+    if isinstance(ob, SingletonPoolSink):
       print('Found sink %d' % id(ob))
 
   for ob in gc.get_objects():
@@ -169,20 +168,34 @@ if __name__ == '__main__':
   def fn():
     from gen_py.scribe import scribe
     from gen_py.scribe.ttypes import LogEntry
+    from gen_py.hello import Hello
 
-    GreenletProfiler.set_clock_type('cpu')
-    GreenletProfiler.start()
+    client = Thrift.NewClient(Hello.Iface, 'tcp://localhost:8080')
+    ret = client.hi('hi!')
+    ret = client.hi('hi!')
+    ret = client.hi('hi!')
+    print(ret)
+    client.DispatcherClose()
 
-    #client = ThriftMux.newClient(ExampleService.Iface, 'tcp://localhost:8080,localhost:8082')
-    #ret = client.passMessage(ttypes.Message('hi!'))
-    #print(ret)
 
+    client = ThriftMux.NewClient(Hello.Iface, 'tcp://localhost:8080')
+    ret = client.hi('hi!')
+    ret = client.hi('hi!')
+    ret = client.hi('hi!')
+    print(ret)
+
+    p = Scales.SERVICE_REGISTRY[Hello.Iface][0]
+    while p:
+      print(p.sink_class)
+      p = p.next_provider
+
+    dumpVarz()
+    return
     #return
     #client = Thrift.newClient(scribe.Iface, 'tcp://ec2-54-161-50-43.compute-1.amazonaws.com:15740')
-    client = Thrift.NewClient(scribe.Iface, 'zk://zk.aue1.tellapart.net:2181/service_discovery/aue1/scribe/devel/agent')
-    ret = client.Log([LogEntry('test', 'steve is cool')])
-    print(ret)
-    return
+    #client = Thrift.NewClient(scribe.Iface, 'zk://zk.aue1.tellapart.net:2181/service_discovery/aue1/scribe/devel/agent')
+    #ret = client.Log([LogEntry('test', 'steve is cool')])
+    #print(ret)
     #dumpVarz()
     #return
     #print(ret)
@@ -202,8 +215,9 @@ if __name__ == '__main__':
       while True:
         x+=1
         try:
+          client.hi('hi!')
           #client.Log([LogEntry('test', 'steve is cool')])
-          client.passMessage(ttypes.Message('hi!'))
+          #client.passMessage(ttypes.Message('hi!'))
         except:
           traceback.print_exc()
           pass

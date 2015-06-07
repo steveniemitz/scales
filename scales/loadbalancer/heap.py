@@ -1,13 +1,12 @@
 import random
 
 from .base import (
-  LoadBalancerChannelSink,
+  LoadBalancerSink,
   NoMembersError
 )
 from ..constants import (Int, ChannelState)
 from ..sink import (
-  FailingChannelSink,
-  ReplySink,
+  FailingMessageSink,
 )
 
 
@@ -36,7 +35,7 @@ class Heap(object):
         break
 
 
-class HeapBalancerChannelSink(LoadBalancerChannelSink):
+class HeapBalancerSink(LoadBalancerSink):
   Penalty = Int.MaxValue
   Zero = Int.MinValue + 1
 
@@ -56,11 +55,11 @@ class HeapBalancerChannelSink(LoadBalancerChannelSink):
       else:
         return self.index < other.index
 
-  def __init__(self, next_sink_provider, service_name, server_set_provider):
-    self._heap = [self.Node(FailingChannelSink(NoMembersError), self.Zero, 0)]
+  def __init__(self, next_provider, properties):
+    self._heap = [self.Node(FailingMessageSink(NoMembersError), self.Zero, 0)]
     self._downq = None
     self._size = 0
-    super(HeapBalancerChannelSink, self).__init__(next_sink_provider, service_name, server_set_provider)
+    super(HeapBalancerSink, self).__init__(next_provider, properties)
 
   def AsyncProcessRequest(self, sink_stack, msg, stream, headers):
     if self._size == 0:
@@ -181,7 +180,7 @@ class HeapBalancerChannelSink(LoadBalancerChannelSink):
     else:
       self._RemoveNode(channel)
 
-  def Open(self):
+  def Open(self, force=False):
     pass
 
   def Close(self):
@@ -189,4 +188,4 @@ class HeapBalancerChannelSink(LoadBalancerChannelSink):
 
   @property
   def state(self):
-    pass
+    return max([n.channel.state for n in self._heap])

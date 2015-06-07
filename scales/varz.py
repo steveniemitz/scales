@@ -170,13 +170,15 @@ class VarzReceiver(object):
 
 class VarzSocketWrapper(object):
   """A wrapper for Thrift sockets that records various varz about the socket."""
+  __slots__ = ('_socket', '_varz', '_is_open')
+
   class Varz(VarzBase):
     _VARZ_BASE_NAME = 'scales.socket'
     _VARZ_SOURCE_TYPE = SourceType.ServiceAndEndpoint
     _VARZ = {
       'bytes_recv': Rate,
       'bytes_sent': Rate,
-      'num_connections': Gauge,
+      'num_connections': Counter,
       'tests_failed': Counter,
       'connects': Counter,
       'open_latency': AverageTimer
@@ -184,6 +186,7 @@ class VarzSocketWrapper(object):
 
   def __init__(self, socket, varz_tag):
     self._socket = socket
+    self._is_open = self._socket.isOpen()
     self._varz = self.Varz((varz_tag, '%s:%d' % (self.host, self.port)))
 
   @property
@@ -212,12 +215,15 @@ class VarzSocketWrapper(object):
   def open(self):
     with self._varz.open_latency.Measure():
       self._socket.open()
+    self._is_open = True
     self._varz.connects()
     self._varz.num_connections(1)
 
   def close(self):
-    self._varz.num_connections(-1)
-    self._socket.close()
+    if self._is_open:
+      self._is_open = False
+      self._varz.num_connections(-1)
+      self._socket.close()
 
   def readAll(self, sz):
     buff = ''
