@@ -3,7 +3,6 @@ import heapq
 import gevent
 from gevent.event import Event
 
-WAIT_CANCELED = -1
 
 class TimerQueue(object):
   def __init__(self, time_source=time.time, resolution=0.05):

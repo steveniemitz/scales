@@ -85,10 +85,6 @@ class ApertureBalancerSink(HeapBalancerSink):
       self._idle_channels.discard(channel)
     self._UpdateSizeVarz()
 
-  def _OnNodeDown(self, node):
-    if node.channel in self._active_channels:
-      self._TryExpandAperture()
-
   def _TryExpandAperture(self):
     while any(self._idle_channels):
       new_channel, = random.sample(self._idle_channels, 1)
@@ -103,11 +99,11 @@ class ApertureBalancerSink(HeapBalancerSink):
   def _ContractAperture(self):
     if len(self._active_channels) > 1:
       self._log.debug('Contracting aperture')
-      rnd_channel, = random.sample(self._active_channels, 1)
-      self._active_channels.discard(rnd_channel)
-      self.__varz.size(len(self._active_channels))
-      self._idle_channels.add(rnd_channel)
-      super(ApertureBalancerSink, self)._RemoveNode(rnd_channel)
+      # The end of the heap will be the most-loaded-ish.
+      most_loaded = self._heap[-1].channel
+      self._active_channels.discard(most_loaded)
+      self._idle_channels.add(most_loaded)
+      super(ApertureBalancerSink, self)._RemoveNode(most_loaded)
       self._UpdateSizeVarz()
 
   def _OnGet(self, node):

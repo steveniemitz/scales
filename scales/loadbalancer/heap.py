@@ -82,7 +82,7 @@ class HeapBalancerSink(LoadBalancerSink):
     context()
     sink_stack.AsyncProcessResponse(stream, msg)
 
-  # Events overridable by subclasses
+  # Events override by subclasses
   def _OnNodeDown(self, node):
     pass
 
@@ -140,8 +140,10 @@ class HeapBalancerSink(LoadBalancerSink):
     n.load -= 1
     if n.load < self.Zero:
       self._log.warning('Decrementing load below Zero')
-    if n.index < 0:
+    if n.index < 0 and n.load > self.Zero:
       pass
+    elif n.index < 0 and n.load == self.Zero:
+      n.channel.Close()
     elif n.load == self.Zero and self._size > 1:
       i = n.index
       Heap.swap(self._heap, i, self._size)
@@ -171,7 +173,8 @@ class HeapBalancerSink(LoadBalancerSink):
     self._heap.pop()
     self._size -= 1
     node.index = -1
-    node.channel.Close()
+    if node.load == self.Zero:
+      node.channel.Close()
 
   def _OnServersChanged(self, endpoint, added):
     _, channel = endpoint
