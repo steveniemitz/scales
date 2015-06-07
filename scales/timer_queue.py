@@ -3,7 +3,6 @@ import heapq
 import gevent
 from gevent.event import Event
 
-WAIT_CANCELED = -1
 
 class TimerQueue(object):
   def __init__(self, time_source=time.time, resolution=0.05):
@@ -19,11 +18,13 @@ class TimerQueue(object):
       # If the queue is empty, wait for an item to be added.
       if not any(self._queue):
         self._event.wait()
-      self._event.clear()
-      # A sleep here is needed to work around a bug with gevent.
-      # If the event is cleared and then immediately waited on, the wait will
-      # completed instantly and report it timed out.
-      gevent.sleep(0)
+
+      if self._event.is_set():
+        self._event.clear()
+        # A sleep here is needed to work around a bug with gevent.
+        # If the event is cleared and then immediately waited on, the wait will
+        # completed instantly and report it timed out.
+        gevent.sleep(0)
 
       # Peek the head of the queue
       at, peeked_seq, cancelled = self._PeekNext()
@@ -45,12 +46,12 @@ class TimerQueue(object):
 
       if wait_timed_out:
         # Nothing newer came in before it timed out.
-        at, seq, cancelled, action, args, kwargs = heapq.heappop(self._queue)
+        at, seq, cancelled, action = heapq.heappop(self._queue)
         if seq != peeked_seq:
           raise Exception("seq != peeked_seq")
         if not cancelled:
           # Run it
-          gevent.spawn(action, *args, **kwargs)
+          gevent.spawn(action)
       else:
         # A newer item came in, nothing to do here, re-loop
         pass
@@ -58,7 +59,7 @@ class TimerQueue(object):
   def _PeekNext(self):
     return self._queue[0][:3]
 
-  def Schedule(self, deadline, action, *args, **kwargs):
+  def Schedule(self, deadline, action):
     if action is None:
       raise Exception("action must be non-null")
 
@@ -66,13 +67,11 @@ class TimerQueue(object):
       deadline = round(deadline / self._resolution) * self._resolution
 
     self._seq += 1
-    timeout_args = [deadline, self._seq, False, action, args, kwargs]
+    timeout_args = [deadline, self._seq, False, action]
     def cancel():
       timeout_args[2] = True
       # Null out 3-5 to avoid holding onto references.
       timeout_args[3] = None
-      timeout_args[4] = None
-      timeout_args[5] = None
 
     heapq.heappush(self._queue, timeout_args)
     # Wake up the waiter thread if this is now the newest

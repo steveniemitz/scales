@@ -1,26 +1,22 @@
-
+from ..constants import SinkProperties
 from ..channel_resurrector import ResurrectorChannelSinkProvider
-from ..loadbalancer import ApertureBalancerChannelSink
+from ..loadbalancer.aperture import ApertureBalancerChannelSinkProvider
 from ..pool import WatermarkPoolChannelSinkProvider
 from .sink import (
   SocketTransportSinkProvider,
-  ThriftFormatterSink,
+  ThriftFormatterSinkProvider,
 )
-from ..sink import MessageSinkStackBuilder
+
 from ..builder import BaseBuilder
 
 
 class Thrift(BaseBuilder):
   """A builder for Thrift service clients."""
-  class MessageSinkStackBuilder(MessageSinkStackBuilder):
-    def CreateSinkStack(self, builder):
-      name = builder.name
-      formatter = ThriftFormatterSink(name)
-      pool_provider = WatermarkPoolChannelSinkProvider()
-      pool_provider.next_provider = SocketTransportSinkProvider()
-
-      resurrector = ResurrectorChannelSinkProvider()
-      resurrector.next_provider = pool_provider
-      balancer = ApertureBalancerChannelSink(resurrector, name, builder.server_set_provider)
-      formatter.next_sink = balancer
-      return formatter
+  class SinkProvider(BaseBuilder.SinkProvider):
+    _PROVIDERS = [
+      ThriftFormatterSinkProvider,
+      ApertureBalancerChannelSinkProvider,
+      ResurrectorChannelSinkProvider,
+      WatermarkPoolChannelSinkProvider,
+      SocketTransportSinkProvider
+    ]

@@ -4,16 +4,28 @@ import collections
 import functools
 import inspect
 
+from .constants import SinkProperties
 from .dispatch import MessageDispatcher
 from .pool import (
   StaticServerSetProvider,
   ZooKeeperServerSetProvider,
 )
-from .sink import TimeoutSink
+from .sink import TimeoutSinkProvider
 from .timer_queue import TimerQueue
 
-# A timer queue for all async timeouts in scales.
-GLOBAL_TIMER_QUEUE = TimerQueue()
+class _ProxyBase(object):
+  def __init__(self, dispatcher):
+    self._dispatcher = dispatcher
+    super(_ProxyBase, self).__init__()
+
+  def __del__(self):
+    self.DispatcherClose()
+
+  def DispatcherOpen(self):
+    self._dispatcher.Open()
+
+  def DispatcherClose(self):
+    self._dispatcher.Close()
 
 
 class ClientProxyBuilder(object):
@@ -21,10 +33,6 @@ class ClientProxyBuilder(object):
   message dispatcher.
   """
   _PROXY_TYPE_CACHE = {}
-
-  @staticmethod
-  def _GetProxyName(Iface):
-    return '_ScalesTransparentProxy<%s>' % Iface.__module__
 
   @staticmethod
   def _BuildServiceProxy(Iface):
@@ -42,9 +50,6 @@ class ClientProxyBuilder(object):
         return ar if async else ar.get()
       return _ProxyMethod
 
-    def _ProxyInit(self, dispatcher):
-      self._dispatcher = dispatcher
-
     is_user_method = lambda m: inspect.ismethod(m) and not inspect.isbuiltin(m)
 
     # Get all methods defined on the interface.
@@ -53,12 +58,11 @@ class ClientProxyBuilder(object):
 
     iface_methods.update({ m[0] + "_async": ProxyMethod(*m, async=True)
                            for m in inspect.getmembers(Iface, is_user_method) })
-    iface_methods.update({ '__init__': _ProxyInit })
 
     # Create a proxy class to intercept the interface's methods.
     proxy = type(
-      ClientProxyBuilder._GetProxyName(Iface),
-      (Iface, object),
+      '_ScalesTransparentProxy<%s>' % Iface.__module__,
+      (_ProxyBase, Iface),
       iface_methods)
     return proxy
 
@@ -115,6 +119,8 @@ class ScalesUriParser(object):
 class Scales(object):
   """Factory for scales clients."""
 
+  SERVICE_REGISTRY = {}
+
   class ClientBuilder(object):
     """Builder for creating Scales clients."""
 
@@ -126,7 +132,7 @@ class Scales(object):
       self._uri = None
       self._timeout = 10
       self._server_set_provider = None
-      self._message_sink_builder = None
+      self._sink_provider = None
       self._load_balancer = None
       self._client_provider = ClientProxyBuilder()
 
@@ -194,14 +200,14 @@ class Scales(object):
       self._initial_size_pct = size
       return self
 
-    def SetMessageSinkBuilder(self, message_sink_builder):
+    def SetSinkProvider(self, message_sink_builder):
       """Sets the message sink builder.  Message sink builders are used to
       process messages.  See sink.py for a full description of message sinks.
 
       Args:
         message_sink_builder - An instance of a MessageSinkStackBuilder or derived class.
       """
-      self._message_sink_builder = message_sink_builder
+      self._sink_provider = message_sink_builder
       return self
 
     def SetClientProvider(self, client_provider):
@@ -218,24 +224,37 @@ class Scales(object):
       self._server_set_provider = server_set_provider
       return self
 
+    def SetName(self, name):
+      self._name = name
+      return self
+
     def Build(self):
       """Build a client given the current builder configuration.
 
       Returns:
         A proxy object with all methods of Iface.
       """
-      sink_stack = self._message_sink_builder.CreateSinkStack(self)
-      timeout_sink = TimeoutSink(self._name)
-      timeout_sink.next_sink = sink_stack
+      sink_provider = self._sink_provider.CreateProvider()
 
+      timeout_sink = TimeoutSinkProvider()
+      timeout_sink.next_provider = sink_provider
+
+      properties = {
+        SinkProperties.Service: self.name,
+        SinkProperties.ServerSetProvider: self.server_set_provider,
+        SinkProperties.Timeout: self._timeout
+      }
+      Scales.SERVICE_REGISTRY[self.name] = (timeout_sink, properties)
       dispatcher = MessageDispatcher(
           self._service,
           timeout_sink,
-          self._timeout)
+          properties)
 
       self._built = True
       proxy_cls = self._client_provider.CreateServiceClient(self._service)
-      return proxy_cls(dispatcher)
+      proxy_obj = proxy_cls(dispatcher)
+      proxy_obj.DispatcherOpen()
+      return proxy_obj
 
   @staticmethod
   def NewBuilder(Iface):

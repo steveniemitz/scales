@@ -2,13 +2,15 @@ from collections import deque
 import logging
 
 import gevent
+from gevent.event import AsyncResult
 
-from .base import PoolChannelSink
-from ..constants import (Int, ChannelState)
+from .base import PoolSink
+from .. import async_util
+from ..constants import (Int, ChannelState, SinkProperties)
 from ..sink import (
-  ClientChannelSink,
+  ClientMessageSink,
   ChannelSinkProvider,
-  FailingChannelSink
+  FailingMessageSink
 )
 from ..dispatch import ServiceClosedError
 from ..varz import (
@@ -18,9 +20,9 @@ from ..varz import (
   VarzBase
 )
 
-class QueuingChannelSink(ClientChannelSink):
+class QueuingMessageSink(ClientMessageSink):
   def __init__(self, queue):
-    super(QueuingChannelSink, self).__init__()
+    super(QueuingMessageSink, self).__init__()
     self._queue = queue
 
   def AsyncProcessRequest(self, sink_stack, msg, stream, headers):
@@ -29,12 +31,8 @@ class QueuingChannelSink(ClientChannelSink):
   def AsyncProcessResponse(self, sink_stack, context, stream, msg):
     raise NotImplementedError("This should never be called")
 
-  def Open(self): pass
-  def Close(self): pass
-  @property
-  def state(self): pass
 
-class WatermarkPoolChannelSink(PoolChannelSink):
+class WatermarkPoolSink(PoolSink):
   ROOT_LOG = logging.getLogger('scales.pool.WatermarkPool')
 
   class Varz(VarzBase):
@@ -47,7 +45,10 @@ class WatermarkPoolChannelSink(PoolChannelSink):
       'max_size': Gauge
     }
 
-  def __init__(self, sink_provider, endpoint, name, properties):
+  def __init__(self, sink_provider, properties):
+    endpoint = properties[SinkProperties.Endpoint]
+    name = properties[SinkProperties.Service]
+
     self._cache = deque()
     self._waiters = deque()
     self._min_size = 1
@@ -59,7 +60,14 @@ class WatermarkPoolChannelSink(PoolChannelSink):
     self._log = self.ROOT_LOG.getChild('[%s.%s]' % (name, socket_name))
     self._varz.min_size(self._min_size)
     self._varz.max_size(self._max_size)
-    super(WatermarkPoolChannelSink, self).__init__(sink_provider, endpoint, name, properties)
+    super(WatermarkPoolSink, self).__init__(sink_provider, properties)
+
+  def __PropegateShutdown(self, value):
+    self.on_faulted.Set(value)
+
+  def _DiscardSink(self, sink):
+    sink.on_faulted.Unsubscribe(self.__PropegateShutdown)
+    sink.Close()
 
   def _Dequeue(self):
     while any(self._cache):
@@ -75,15 +83,16 @@ class WatermarkPoolChannelSink(PoolChannelSink):
     elif self._current_size < self._max_size:
       self._current_size += 1
       self._varz.size(self._current_size)
-      sink = self._sink_provider.CreateSink(self._endpoint, self._name, None)
-      sink.Open()
+      sink = self._sink_provider.CreateSink(self._properties)
+      sink.Open().wait()
+      sink.on_faulted.Subscribe(self.__PropegateShutdown)
       return sink
     else:
       self._varz.queue_size(len(self._waiters) + 1)
-      return QueuingChannelSink(self._waiters)
+      return QueuingMessageSink(self._waiters)
 
   def _Release(self, sink):
-    if isinstance(sink, QueuingChannelSink):
+    if isinstance(sink, QueuingMessageSink):
       return
 
     do_close = False
@@ -103,7 +112,7 @@ class WatermarkPoolChannelSink(PoolChannelSink):
 
     self._varz.size(self._current_size)
     if do_close:
-      sink.Close()
+      self._DiscardSink(sink)
 
   def _ProcessQueue(self, sink):
     sink_stack, msg, stream, headers = self._waiters.popleft()
@@ -115,20 +124,25 @@ class WatermarkPoolChannelSink(PoolChannelSink):
     sink.AsyncProcessRequest(sink_stack, msg, stream, headers)
 
   def Open(self):
-    pass
+    ar = AsyncResult()
+    async_util.SafeLink(ar, self._OpenImpl)
+    return ar
+
+  def _OpenImpl(self):
+    sink = self._Get()
+    self._Release(sink)
 
   def Close(self):
     self._state = ChannelState.Closed
-    fail_sink = FailingChannelSink(ServiceClosedError)
+    fail_sink = FailingMessageSink(ServiceClosedError)
 
-    [sink.Close() for sink in self._cache]
+    [self._DiscardSink(sink) for sink in self._cache]
     [fail_sink.AsyncProcessRequest(sink_stack, msg, stream, headers)
      for sink_stack, msg, stream, headers in self._waiters]
-    self._on_faulted.Set(None)
 
   @property
   def state(self):
     return self._state
 
 
-WatermarkPoolChannelSinkProvider = ChannelSinkProvider(WatermarkPoolChannelSink)
+WatermarkPoolChannelSinkProvider = ChannelSinkProvider(WatermarkPoolSink)

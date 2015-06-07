@@ -56,6 +56,9 @@ class VarzMetric(object):
     self._fn(self._metric, *args)
 
   def ForSource(self, source):
+    if not isinstance(source, tuple) or len(source) != 3:
+      raise Exception("Source must be a 3-tuple")
+
     return type(self)(self._metric, source)
 
 class Gauge(VarzMetric): VARZ_TYPE = VarzType.Gauge
@@ -93,8 +96,14 @@ class VarzBase(object):
   _VARZ_SOURCE_TYPE = SourceType.Service
 
   def __init__(self, source):
-    if not isinstance(source, tuple):
-      source = source,
+    method, service, endpoint = None, None, None
+    if self._VARZ_SOURCE_TYPE == SourceType.Service:
+      service = source
+    elif self._VARZ_SOURCE_TYPE == SourceType.MethodAndService:
+      method, service = source
+    elif self._VARZ_SOURCE_TYPE == SourceType.ServiceAndEndpoint:
+      service, endpoint = source
+    source = method, service, endpoint
     for k, v in self._VARZ.iteritems():
       setattr(self, k, v.ForSource(source))
 
@@ -115,20 +124,20 @@ class VarzReceiver(object):
   @staticmethod
   def _CalculatePercentiles():
     while True:
-      gevent.sleep(10)
+      gevent.sleep(60)
       for m in [m for m, d in VarzReceiver.VARZ_METRICS.items()
                 if d[0] == VarzType.AverageTimer]:
         for source, values in VarzReceiver.VARZ_DATA[m].items():
+          gevent.sleep(0)
           values = sorted(values)
           VarzReceiver.VARZ_DATA_PERCENTILES[m][source] = [
-            VarzReceiver._CalculatePercentile(values, pct)
+            VarzReceiver.CalculatePercentile(values, pct)
             for pct in VarzReceiver.VARZ_PERCENTILES
           ]
           gevent.sleep(0)
 
-
   @staticmethod
-  def _CalculatePercentile(values, pct):
+  def CalculatePercentile(values, pct):
     k = (len(values) - 1) * pct
     f = math.floor(k)
     c = math.ceil(k)
@@ -166,17 +175,64 @@ class VarzReceiver(object):
       queue.popleft()
     queue.append(value)
 
+class VarzAggregator(object):
+  class _Agg(object):
+    __slots__ = 'total', 'count', 'work'
+    def __init__(self):
+      self.total = 0.0
+      self.count = 0
+      self.work = 0.0
+
+  @staticmethod
+  def Aggregate(varz, metrics):
+    agg = defaultdict(dict)
+    for metric in varz.keys():
+      metric_info = metrics.get(metric, None)
+      if not metric_info:
+        continue
+      varz_type, source_tpe = metric_info
+      metric_agg = agg[metric]
+      for source in varz[metric].keys():
+        gevent.sleep(0)
+        method, service, endpoint = source
+        data = varz[metric][source]
+        if service not in metric_agg:
+          metric_agg[service] = VarzAggregator._Agg()
+          if isinstance(data, deque):
+            metric_agg[service].work = []
+
+        metric_agg[service].work += data
+        metric_agg[service].count += 1
+
+      if varz_type in (VarzType.AggregateTimer, VarzType.Counter,
+                       VarzType.Gauge, VarzType.Rate):
+        for source_agg in metric_agg.values():
+          source_agg.total = source_agg.work
+      elif varz_type == VarzType.AverageTimer:
+        for source_agg in metric_agg.values():
+          values = sorted(source_agg.work)
+          source_agg.total = [
+            VarzReceiver.CalculatePercentile(values, pct)
+            for pct in VarzReceiver.VARZ_PERCENTILES
+          ]
+      else:
+        for source_agg in metric_agg.values():
+          source_agg.total = source_agg.work / source_agg.count
+
+    return agg
 
 
 class VarzSocketWrapper(object):
   """A wrapper for Thrift sockets that records various varz about the socket."""
+  __slots__ = ('_socket', '_varz', '_is_open')
+
   class Varz(VarzBase):
     _VARZ_BASE_NAME = 'scales.socket'
     _VARZ_SOURCE_TYPE = SourceType.ServiceAndEndpoint
     _VARZ = {
       'bytes_recv': Rate,
       'bytes_sent': Rate,
-      'num_connections': Gauge,
+      'num_connections': Counter,
       'tests_failed': Counter,
       'connects': Counter,
       'open_latency': AverageTimer
@@ -184,6 +240,7 @@ class VarzSocketWrapper(object):
 
   def __init__(self, socket, varz_tag):
     self._socket = socket
+    self._is_open = self._socket.isOpen()
     self._varz = self.Varz((varz_tag, '%s:%d' % (self.host, self.port)))
 
   @property
@@ -212,12 +269,15 @@ class VarzSocketWrapper(object):
   def open(self):
     with self._varz.open_latency.Measure():
       self._socket.open()
+    self._is_open = True
     self._varz.connects()
     self._varz.num_connections(1)
 
   def close(self):
-    self._varz.num_connections(-1)
-    self._socket.close()
+    if self._is_open:
+      self._is_open = False
+      self._varz.num_connections(-1)
+      self._socket.close()
 
   def readAll(self, sz):
     buff = ''

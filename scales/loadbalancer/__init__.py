@@ -1,3 +1,3 @@
-from .aperture import ApertureBalancerChannelSink
-from .heap import HeapBalancerChannelSink
+from .aperture import ApertureBalancerSink
+from .heap import HeapBalancerSink
 

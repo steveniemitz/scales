@@ -5,12 +5,8 @@ from abc import (
   abstractmethod
 )
 
-import gevent
-
 from ..message import MethodReturnMessage
-from ..sink import (
-  ClientChannelSink
-)
+from ..sink import ClientMessageSink
 
 ROOT_LOG = logging.getLogger("scales")
 
@@ -88,16 +84,15 @@ class ZooKeeperServerSetProvider(ServerSetProvider):
     return self._server_set.get_members()
 
 
-class PoolChannelSink(ClientChannelSink):
+class PoolSink(ClientMessageSink):
   """A pool maintains a set of zero or more transport sinks
   to a single endpoint."""
   __metaclass__ = ABCMeta
 
-  def __init__(self, sink_provider, endpoint, name, properties):
-    self._name = name
-    self._endpoint = endpoint
+  def __init__(self, sink_provider, properties):
+    self._properties = properties
     self._sink_provider = sink_provider
-    super(PoolChannelSink, self).__init__()
+    super(PoolSink, self).__init__()
 
   @abstractmethod
   def _Get(self):
@@ -128,7 +123,7 @@ class PoolChannelSink(ClientChannelSink):
       sink = self._Get()
     except Exception as e:
       excr = MethodReturnMessage(error=e)
-      sink_stack.AsyncProcessResponse(None, excr)
+      sink_stack.AsyncProcessResponseMessage(excr)
       return
 
     sink_stack.Push(self, sink)

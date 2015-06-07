@@ -1,13 +1,13 @@
 import random
 
 from .base import (
-  LoadBalancerChannelSink,
+  LoadBalancerSink,
   NoMembersError
 )
+from .. import async_util
 from ..constants import (Int, ChannelState)
 from ..sink import (
-  FailingChannelSink,
-  ReplySink,
+  FailingMessageSink,
 )
 
 
@@ -36,7 +36,7 @@ class Heap(object):
         break
 
 
-class HeapBalancerChannelSink(LoadBalancerChannelSink):
+class HeapBalancerSink(LoadBalancerSink):
   Penalty = Int.MaxValue
   Zero = Int.MinValue + 1
 
@@ -56,11 +56,11 @@ class HeapBalancerChannelSink(LoadBalancerChannelSink):
       else:
         return self.index < other.index
 
-  def __init__(self, next_sink_provider, service_name, server_set_provider):
-    self._heap = [self.Node(FailingChannelSink(NoMembersError), self.Zero, 0)]
+  def __init__(self, next_provider, properties):
+    self._heap = [self.Node(FailingMessageSink(NoMembersError), self.Zero, 0)]
     self._downq = None
     self._size = 0
-    super(HeapBalancerChannelSink, self).__init__(next_sink_provider, service_name, server_set_provider)
+    super(HeapBalancerSink, self).__init__(next_provider, properties)
 
   def AsyncProcessRequest(self, sink_stack, msg, stream, headers):
     if self._size == 0:
@@ -83,7 +83,7 @@ class HeapBalancerChannelSink(LoadBalancerChannelSink):
     context()
     sink_stack.AsyncProcessResponse(stream, msg)
 
-  # Events overridable by subclasses
+  # Events override by subclasses
   def _OnNodeDown(self, node):
     pass
 
@@ -141,8 +141,10 @@ class HeapBalancerChannelSink(LoadBalancerChannelSink):
     n.load -= 1
     if n.load < self.Zero:
       self._log.warning('Decrementing load below Zero')
-    if n.index < 0:
+    if n.index < 0 and n.load > self.Zero:
       pass
+    elif n.index < 0 and n.load == self.Zero:
+      n.channel.Close()
     elif n.load == self.Zero and self._size > 1:
       i = n.index
       Heap.swap(self._heap, i, self._size)
@@ -158,7 +160,7 @@ class HeapBalancerChannelSink(LoadBalancerChannelSink):
     self._OnPut(n)
 
   def _AddNode(self, channel):
-    channel.Open()
+    channel.Open().wait()
     self._size += 1
     new_node = self.Node(channel, self.Zero, self._size)
     self._heap.append(new_node)
@@ -172,7 +174,8 @@ class HeapBalancerChannelSink(LoadBalancerChannelSink):
     self._heap.pop()
     self._size -= 1
     node.index = -1
-    node.channel.Close()
+    if node.load == self.Zero:
+      node.channel.Close()
 
   def _OnServersChanged(self, endpoint, added):
     _, channel = endpoint
@@ -181,12 +184,16 @@ class HeapBalancerChannelSink(LoadBalancerChannelSink):
     else:
       self._RemoveNode(channel)
 
-  def Open(self):
-    pass
+  def Open(self, force=False):
+    if self._size > 0:
+      # Ignore the first sink, it's the FailingChannelSink.
+      return async_util.WhenAny([n.channel.Open() for n in self._heap[1:]])
+    else:
+      return async_util.Complete()
 
   def Close(self):
     [n.channel.Close() for n in self._heap]
 
   @property
   def state(self):
-    pass
+    return max([n.channel.state for n in self._heap])

@@ -2,20 +2,23 @@ import logging
 
 from gevent.event import Event
 
-from ..sink import ClientChannelSink
+from ..constants import SinkProperties
+from ..sink import ClientMessageSink
 
 ROOT_LOG = logging.getLogger("scales.loadbalancer")
 
 class NoMembersError(Exception): pass
 
-class LoadBalancerChannelSink(ClientChannelSink):
-  def __init__(self, next_sink_provider, service_name, server_set_provider):
+class LoadBalancerSink(ClientMessageSink):
+  def __init__(self, next_provider, properties):
+    self._properties = properties
+    service_name = properties[SinkProperties.Service]
+    server_set_provider = properties['server_set_provider']
     log_name = self.__class__.__name__.replace('ChannelSink', '')
     self._log = ROOT_LOG.getChild('%s.[%s]' % (log_name, service_name))
     self._init_done = Event()
-    self._service_name = service_name
     self._server_set_provider = server_set_provider
-    self._next_sink_provider = next_sink_provider
+    self._next_sink_provider = next_provider
     server_set_provider.Initialize(
       self._OnServerSetJoin,
       self._OnServerSetLeave)
@@ -23,7 +26,7 @@ class LoadBalancerChannelSink(ClientChannelSink):
     self._servers = {}
     [self._AddServer(m) for m in server_set]
     self._init_done.set()
-    super(LoadBalancerChannelSink, self).__init__()
+    super(LoadBalancerSink, self).__init__()
 
   def _OnServersChanged(self, instance, added):
     pass
@@ -36,10 +39,9 @@ class LoadBalancerChannelSink(ClientChannelSink):
       instance - A Member object to be added to the pool.
     """
     if not instance.service_endpoint in self._servers:
-      channel = self._next_sink_provider.CreateSink(
-          instance.service_endpoint,
-          self._service_name,
-          None)
+      new_props = self._properties.copy()
+      new_props.update({ SinkProperties.Endpoint: instance.service_endpoint })
+      channel = self._next_sink_provider.CreateSink(new_props)
       self._servers[instance.service_endpoint] = channel
       self._log.info("Instance %s joined (%d members)" % (instance.service_endpoint, len(self._servers)))
       self._OnServersChanged((instance, channel), True)

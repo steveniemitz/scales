@@ -3,9 +3,11 @@ from cStringIO import StringIO
 import time
 
 import gevent
+from gevent.event import AsyncResult
 from thrift.transport import TTransport
 
-from ..constants import ChannelState
+from .. import async_util
+from ..constants import (ChannelState, SinkProperties)
 from ..message import (
   ClientError,
   Deadline,
@@ -14,10 +16,9 @@ from ..message import (
   TimeoutError
 )
 from ..sink import (
+  ChannelSinkProvider,
   ChannelSinkProviderBase,
-  ClientChannelTransportSink,
-  ClientChannelSinkStack,
-  ClientFormatterSink,
+  ClientMessageSink,
 )
 from ..thrift.socket import TSocket
 from ..varz import (
@@ -34,7 +35,7 @@ class NoopTimeout(object):
   def start(self): pass
   def cancel(self): pass
 
-class SocketTransportSink(ClientChannelTransportSink):
+class SocketTransportSink(ClientMessageSink):
   class Varz(VarzBase):
     _VARZ_BASE_NAME = 'scales.thrift.SocketTransportSink'
     _VARZ_SOURCE_TYPE = SourceType.ServiceAndEndpoint
@@ -55,18 +56,26 @@ class SocketTransportSink(ClientChannelTransportSink):
     socket_source = '%s:%d' % (self._socket.host, self._socket.port)
     self._varz = self.Varz((source, socket_source))
     self._processing = None
+    self._open_result = None
 
-  def Open(self):
+  def Open(self, force=False):
+    if not self._open_result:
+      self._open_result = AsyncResult()
+      async_util.SafeLink(self._open_result, self._OpenImpl)
+    return self._open_result
+
+  def _OpenImpl(self):
     try:
       self._socket.open()
+      self._state = ChannelState.Open
     except TTransport.TTransportException:
       self._Fault('Open failed')
       raise
-    self._state = ChannelState.Open
 
   def Close(self):
     self._state = ChannelState.Closed
     self._socket.close()
+    self._open_result = None
     if self._processing:
       p, self._processing = self._processing, None
       p.kill(block=False)
@@ -123,25 +132,25 @@ class SocketTransportSink(ClientChannelTransportSink):
         self._socket.close()
         self._socket.open()
         self._processing = None
-        sink_stack.AsyncProcessResponse(None, MethodReturnMessage(error=err))
+        sink_stack.AsyncProcessResponseMessage(MethodReturnMessage(error=err))
       except Exception as ex:
         if gtimeout:
           gtimeout.cancel()
         self._Fault(ex)
         self._processing = None
-        sink_stack.AsyncProcessResponse(None, MethodReturnMessage(error=ex))
+        sink_stack.AsyncProcessResponseMessage(MethodReturnMessage(error=ex))
 
   @staticmethod
   def _ProcessReply(buf, sink_stack):
     try:
       buf.seek(0)
-      sink_stack.AsyncProcessResponse(buf)
+      sink_stack.AsyncProcessResponseStream(buf)
     except Exception as ex:
-      sink_stack.AsyncProcessResponse(None, MethodReturnMessage(error=ex))
+      sink_stack.AsyncProcessResponseMessage(MethodReturnMessage(error=ex))
 
   def AsyncProcessRequest(self, sink_stack, msg, stream, headers):
     if self._processing is not None:
-      sink_stack.AsyncProcessResponse(None, MethodReturnMessage(
+      sink_stack.AsyncProcessResponseMessage(MethodReturnMessage(
         error=Exception('Concurrency violation in AsyncProcessRequest')))
       return
 
@@ -150,54 +159,56 @@ class SocketTransportSink(ClientChannelTransportSink):
     deadline = msg.properties.get(Deadline.KEY)
     self._processing = gevent.spawn(self._AsyncProcessTransaction, sz + payload, sink_stack, deadline)
 
+  def AsyncProcessResponse(self, sink_stack, context, stream, msg):
+    pass
 
 
-class ThriftFormatterSink(ClientFormatterSink):
-  def __init__(self, source):
+class ThriftFormatterSink(ClientMessageSink):
+  def __init__(self, next_provider, properties):
     super(ThriftFormatterSink, self).__init__()
+    self.next_sink = next_provider.CreateSink(properties)
 
-  def AsyncProcessMessage(self, msg, reply_sink):
+  def AsyncProcessRequest(self, sink_stack, msg, stream, headers):
     buf = StringIO()
     headers = {}
 
     if not isinstance(msg, MethodCallMessage):
-      reply_sink.ProcessReturnMessage(MethodReturnMessage(
+      sink_stack.AsyncProcessResponseMessage(MethodReturnMessage(
           error=ClientError('Invalid message type.')))
+      return
     try:
       MessageSerializer.SerializeThriftCall(msg, buf)
       ctx = msg.service, msg.method
     except Exception as ex:
-      reply_sink.ProcessReturnMessage(MethodReturnMessage(error=ex))
+      sink_stack.AsyncProcessResponseMessage(MethodReturnMessage(error=ex))
       return
 
-    sink_stack = ClientChannelSinkStack(reply_sink)
     sink_stack.Push(self, ctx)
     self.next_sink.AsyncProcessRequest(sink_stack, msg, buf, headers)
 
   def AsyncProcessResponse(self, sink_stack, context, stream, msg):
     if msg:
-      sink_stack.DispatchReplyMessage(msg)
+      # No need to deserialize, it already is
+      sink_stack.AsyncProcessResponseMessage(msg)
     else:
       try:
         msg = MessageSerializer.DeserializeThriftCall(stream, context)
       except Exception as ex:
         msg = MethodReturnMessage(error=ex)
-      sink_stack.DispatchReplyMessage(msg)
+      sink_stack.AsyncProcessResponseMessage(msg)
 
-  def Open(self, force=False):
-    pass
 
-  def Close(self):
-    pass
-
-  @property
-  def state(self):
-    pass
-
+ThriftFormatterSinkProvider = ChannelSinkProvider(ThriftFormatterSink)
 
 class SocketTransportSinkProvider(ChannelSinkProviderBase):
-  def CreateSink(self, server, pool_name, properties):
+  def CreateSink(self, properties):
+    server = properties[SinkProperties.Endpoint]
+    service = properties[SinkProperties.Service]
     sock = TSocket.TSocket(server.host, server.port)
-    healthy_sock = VarzSocketWrapper(sock, pool_name)
-    sink = SocketTransportSink(healthy_sock, pool_name)
+    healthy_sock = VarzSocketWrapper(sock, service)
+    sink = SocketTransportSink(healthy_sock, service)
     return sink
+
+  @property
+  def sink_class(self):
+    return SocketTransportSink
