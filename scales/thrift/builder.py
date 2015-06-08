@@ -1,4 +1,3 @@
-from ..constants import SinkProperties
 from ..channel_resurrector import ResurrectorChannelSinkProvider
 from ..loadbalancer.aperture import ApertureBalancerChannelSinkProvider
 from ..pool import WatermarkPoolChannelSinkProvider
