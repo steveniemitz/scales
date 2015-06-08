@@ -4,6 +4,7 @@ from .base import (
   LoadBalancerSink,
   NoMembersError
 )
+from .. import async_util
 from ..constants import (Int, ChannelState)
 from ..sink import (
   FailingMessageSink,
@@ -159,7 +160,7 @@ class HeapBalancerSink(LoadBalancerSink):
     self._OnPut(n)
 
   def _AddNode(self, channel):
-    channel.Open()
+    channel.Open().wait()
     self._size += 1
     new_node = self.Node(channel, self.Zero, self._size)
     self._heap.append(new_node)
@@ -184,7 +185,11 @@ class HeapBalancerSink(LoadBalancerSink):
       self._RemoveNode(channel)
 
   def Open(self, force=False):
-    pass
+    if self._size > 0:
+      # Ignore the first sink, it's the FailingChannelSink.
+      return async_util.WhenAny([n.channel.Open() for n in self._heap[1:]])
+    else:
+      return async_util.Complete()
 
   def Close(self):
     [n.channel.Close() for n in self._heap]

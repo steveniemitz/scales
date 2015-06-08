@@ -1,4 +1,3 @@
-from .constants import SinkProperties
 from .core import Scales
 
 class BaseBuilder(object):

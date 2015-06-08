@@ -62,14 +62,14 @@ class ApertureBalancerSink(HeapBalancerSink):
     service_name = properties[SinkProperties.Service]
     self.__varz = self.ApertureVarz(service_name)
     super(ApertureBalancerSink, self).__init__(next_provider, properties)
-    self.Open()
 
   def _UpdateSizeVarz(self):
     self.__varz.active(len(self._active_channels))
     self.__varz.idle(len(self._idle_channels))
 
   def _AddNode(self, channel):
-    if not any(self._active_channels):
+    num_healthy = len([c for c in self._active_channels if c.state <= ChannelState.Open])
+    if num_healthy < self._min_size:
       self._active_channels.add(channel)
       super(ApertureBalancerSink, self)._AddNode(channel)
     else:

@@ -2,6 +2,7 @@ import logging
 
 import gevent
 
+from . import async_util
 from .constants import (ChannelState, SinkProperties)
 from .message import (FailedFastError, MethodReturnMessage)
 from .sink import (ClientMessageSink, ChannelSinkProvider)
@@ -61,13 +62,15 @@ class ResurrectorSink(ClientMessageSink):
     if not self.next_sink:
       self.next_sink = self._next_factory.CreateSink(self._properties)
       self.next_sink.on_faulted.Subscribe(self._OnSinkClosed)
+    return self.next_sink.Open()
 
   def Close(self):
     if self._resurrector:
       self._resurrector.kill()
     self._resurrecting = False
-    self.next_sink.on_faulted.Unsubscribe(self._OnSinkClosed)
-    self.next_sink.Close()
+    if self.next_sink:
+      self.next_sink.on_faulted.Unsubscribe(self._OnSinkClosed)
+      self.next_sink.Close()
 
   @property
   def state(self):

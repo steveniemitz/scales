@@ -3,8 +3,10 @@ from cStringIO import StringIO
 import time
 
 import gevent
+from gevent.event import AsyncResult
 from thrift.transport import TTransport
 
+from .. import async_util
 from ..constants import (ChannelState, SinkProperties)
 from ..message import (
   ClientError,
@@ -54,18 +56,26 @@ class SocketTransportSink(ClientMessageSink):
     socket_source = '%s:%d' % (self._socket.host, self._socket.port)
     self._varz = self.Varz((source, socket_source))
     self._processing = None
+    self._open_result = None
 
   def Open(self, force=False):
+    if not self._open_result:
+      self._open_result = AsyncResult()
+      async_util.SafeLink(self._open_result, self._OpenImpl)
+    return self._open_result
+
+  def _OpenImpl(self):
     try:
       self._socket.open()
+      self._state = ChannelState.Open
     except TTransport.TTransportException:
       self._Fault('Open failed')
       raise
-    self._state = ChannelState.Open
 
   def Close(self):
     self._state = ChannelState.Closed
     self._socket.close()
+    self._open_result = None
     if self._processing:
       p, self._processing = self._processing, None
       p.kill(block=False)

@@ -7,6 +7,7 @@ import gevent
 from gevent.event import AsyncResult
 from gevent.queue import Queue
 
+from .. import async_util
 from ..constants import (ChannelState, SinkProperties)
 from ..message import (
   ClientError,
@@ -125,13 +126,13 @@ class SocketTransportSink(ClientMessageSink):
     self._socket_source = '%s:%d' % (self._socket.host, self._socket.port)
     self._service = service
     self._open_result = None
+    self._varz = self.Varz((self._service, self._socket_source))
 
   def _Init(self):
     self._tag_map = {}
     self._open_result = None
     self._ping_ar = None
     self._tag_pool = TagPool((2 ** 24) - 1, self._service, self._socket_source)
-    self._varz = self.Varz((self._service, self._socket_source))
     self._greenlets = []
     self._send_queue = Queue()
 
@@ -147,14 +148,13 @@ class SocketTransportSink(ClientMessageSink):
     """Initializes the dispatcher, opening a connection to the remote host.
     This method may only be called once.
     """
-    if self._state == ChannelState.Open:
-      return
-    elif self._open_result:
-      self._open_result.get()
-      return
+    if not self._open_result:
+      self._Init()
+      self._open_result = AsyncResult()
+      async_util.SafeLink(self._open_result, self._OpenImpl)
+    return self._open_result
 
-    self._Init()
-    self._open_result = AsyncResult()
+  def _OpenImpl(self):
     try:
       self._log.debug('Opening transport.')
       self._socket.open()
@@ -166,7 +166,6 @@ class SocketTransportSink(ClientMessageSink):
       self._log.debug('Open and ping successful')
       self._greenlets.append(gevent.spawn(self._PingLoop))
       self._state = ChannelState.Open
-      self._open_result.set()
       self._varz.active(1)
     except Exception as e:
       self._log.error('Exception opening socket')
@@ -408,7 +407,7 @@ class ThriftMuxMessageSerializerSink(ClientMessageSink):
     buf = StringIO()
     headers = {}
 
-    deadline = msg.properties.get(Deadline.KEY, None)
+    deadline = msg.properties.get(Deadline.KEY)
     if deadline:
       headers['com.twitter.finagle.Deadline'] = Deadline(deadline)
 

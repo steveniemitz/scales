@@ -2,8 +2,10 @@ from collections import deque
 import logging
 
 import gevent
+from gevent.event import AsyncResult
 
 from .base import PoolSink
+from .. import async_util
 from ..constants import (Int, ChannelState, SinkProperties)
 from ..sink import (
   ClientMessageSink,
@@ -82,7 +84,7 @@ class WatermarkPoolSink(PoolSink):
       self._current_size += 1
       self._varz.size(self._current_size)
       sink = self._sink_provider.CreateSink(self._properties)
-      sink.Open()
+      sink.Open().wait()
       sink.on_faulted.Subscribe(self.__PropegateShutdown)
       return sink
     else:
@@ -122,7 +124,13 @@ class WatermarkPoolSink(PoolSink):
     sink.AsyncProcessRequest(sink_stack, msg, stream, headers)
 
   def Open(self):
-    pass
+    ar = AsyncResult()
+    async_util.SafeLink(ar, self._OpenImpl)
+    return ar
+
+  def _OpenImpl(self):
+    sink = self._Get()
+    self._Release(sink)
 
   def Close(self):
     self._state = ChannelState.Closed

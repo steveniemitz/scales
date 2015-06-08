@@ -13,10 +13,6 @@ from .pool import (
 from .sink import TimeoutSinkProvider
 from .timer_queue import TimerQueue
 
-# A timer queue for all async timeouts in scales.
-GLOBAL_TIMER_QUEUE = TimerQueue()
-
-
 class _ProxyBase(object):
   def __init__(self, dispatcher):
     self._dispatcher = dispatcher
@@ -228,6 +224,10 @@ class Scales(object):
       self._server_set_provider = server_set_provider
       return self
 
+    def SetName(self, name):
+      self._name = name
+      return self
+
     def Build(self):
       """Build a client given the current builder configuration.
 
@@ -244,7 +244,7 @@ class Scales(object):
         SinkProperties.ServerSetProvider: self.server_set_provider,
         SinkProperties.Timeout: self._timeout
       }
-      Scales.SERVICE_REGISTRY[self._service] = (timeout_sink, properties)
+      Scales.SERVICE_REGISTRY[self.name] = (timeout_sink, properties)
       dispatcher = MessageDispatcher(
           self._service,
           timeout_sink,

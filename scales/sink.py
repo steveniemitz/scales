@@ -40,8 +40,7 @@ from abc import (
 )
 from collections import deque
 
-from gevent.event import Event
-
+from . import async_util
 from .constants import (ChannelState, SinkProperties)
 from .observable import Observable
 from .message import (
@@ -99,7 +98,9 @@ class ClientMessageSink(MessageSink):
 
   def Open(self, force=False):
     if self.next_sink:
-      self.next_sink.Open()
+      return self.next_sink.Open()
+    else:
+      return async_util.Complete()
 
   def Close(self):
     if self.next_sink:
