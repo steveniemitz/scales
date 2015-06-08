@@ -24,7 +24,11 @@ from .varz import (
 )
 
 class InternalError(Exception): pass
-class ScalesError(Exception):  pass
+class ScalesError(Exception):
+  def __init__(self, ex, msg):
+    self.inner_exception = ex
+    super(ScalesError, self).__init__(msg)
+
 class ServiceClosedError(Exception): pass
 
 class MessageDispatcher(ClientMessageSink):
@@ -116,16 +120,16 @@ class MessageDispatcher(ClientMessageSink):
       An exception object wrapping the error in the MethodCallMessage.
     """
     # Don't wrap timeouts.
-    if msg.error is TimeoutError:
+    if isinstance(msg.error, TimeoutError):
       return msg.error
 
     stack = getattr(msg, 'stack', None)
     if stack:
-      msg = """An error occurred while processing the request
+      ex_msg = """An error occurred while processing the request
 [Inner Exception: --------------------]
 %s[End of Inner Exception---------------]
 """ % ''.join(stack)
-      return ScalesError(msg)
+      return ScalesError(msg.error, ex_msg)
     else:
       return msg.error
 
