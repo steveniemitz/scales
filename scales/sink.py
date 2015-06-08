@@ -239,7 +239,7 @@ class ClientTimeoutSink(ClientMessageSink):
       tag - The tag of the request.
     """
     deadline = msg.properties.get(Deadline.KEY)
-    if deadline and isinstance(msg, MethodCallMessage):
+    if deadline:
       evt = Observable()
       msg.properties[Deadline.EVENT_KEY] = evt
       cancel_timeout = GLOBAL_TIMER_QUEUE.Schedule(deadline, lambda: self._TimeoutHelper(evt, sink_stack))
