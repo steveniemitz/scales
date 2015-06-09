@@ -8,7 +8,7 @@ class BaseBuilder(object):
   """
   DEFAULT_TIMEOUT = 10
 
-  class SinkProvider(object):
+  class SinkProviderProvider(object):
     _PROVIDERS = []
 
     def CreateProvider(self):
@@ -18,7 +18,7 @@ class BaseBuilder(object):
       return providers[0]
 
   def _GetSinkProvider(self):
-    return self.SinkProvider()
+    return self.SinkProviderProvider()
 
   def Configure(self, Iface):
     """Configure a Scales client for the given interface.

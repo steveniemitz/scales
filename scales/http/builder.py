@@ -3,7 +3,7 @@ from .sink import (
 )
 from ..builder import BaseBuilder
 from ..core import Scales
-from ..loadbalancer.aperture import ApertureBalancerChannelSinkProvider
+from ..loadbalancer.aperture import ApertureBalancerSinkProvider
 from ..pool import SingletonPoolChannelSinkProvider
 
 
@@ -18,9 +18,9 @@ class _HttpIface(object):
 class Http(object):
   DEFAULT_TIMEOUT = 60
 
-  class SinkProvider(BaseBuilder.SinkProvider):
+  class SinkProvider(BaseBuilder.SinkProviderProvider):
     _PROVIDERS = [
-      ApertureBalancerChannelSinkProvider,
+      ApertureBalancerSinkProvider,
       SingletonPoolChannelSinkProvider,
       HttpTransportSinkProvider
     ]

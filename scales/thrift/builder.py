@@ -1,5 +1,5 @@
-from ..channel_resurrector import ResurrectorChannelSinkProvider
-from ..loadbalancer.aperture import ApertureBalancerChannelSinkProvider
+from ..resurrector import ResurrectorSinkProvider
+from ..loadbalancer import ApertureBalancerSinkProvider
 from ..pool import WatermarkPoolChannelSinkProvider
 from .sink import (
   SocketTransportSinkProvider,
@@ -10,12 +10,12 @@ from ..builder import BaseBuilder
 
 
 class Thrift(BaseBuilder):
-  """A builder for Thrift service clients."""
-  class SinkProvider(BaseBuilder.SinkProvider):
+  """A builder for Thrift clients."""
+  class SinkProviderProvider(BaseBuilder.SinkProviderProvider):
     _PROVIDERS = [
       ThriftFormatterSinkProvider,
-      ApertureBalancerChannelSinkProvider,
-      ResurrectorChannelSinkProvider,
+      ApertureBalancerSinkProvider,
+      ResurrectorSinkProvider,
       WatermarkPoolChannelSinkProvider,
       SocketTransportSinkProvider
     ]

@@ -1,17 +1,33 @@
-import time
 import heapq
+import logging
+import time
 import gevent
+
+
 from gevent.event import Event
 
+LOG = logging.getLogger('scales.TimerQueue')
 
 class TimerQueue(object):
+  """A timer that provides efficient scheduling of large numbers of events in
+  the near future."""
   def __init__(self, time_source=time.time, resolution=0.05):
+    """
+    Args:
+      time_source - A callable to get the current time (in seconds).
+      resolution - The minimum resolution of the timer.  If set, all events are
+                   quantized to this resolution.
+    """
     self._queue = []
     self._event = Event()
     self._seq = 0
     self._resolution = resolution
     self._time_source = time_source
-    gevent.spawn(self._TimerWorker)
+    self._worker = gevent.spawn(self._TimerWorker)
+
+  def __del__(self):
+    self._worker.kill(block=False)
+    self._worker = None
 
   def _TimerWorker(self):
     while True:
@@ -47,11 +63,15 @@ class TimerQueue(object):
       if wait_timed_out:
         # Nothing newer came in before it timed out.
         at, seq, cancelled, action = heapq.heappop(self._queue)
+        # This is an assert that should never occur, if it does, we somehow
+        # ran events out of order.
         if seq != peeked_seq:
-          raise Exception("seq != peeked_seq")
+          LOG.critical("seq != peeked_seq [%d, %d]" % (seq, peeked_seq))
         if not cancelled:
           # Run it
           gevent.spawn(action)
+          # Clear the reference out in this loop
+          del action
       else:
         # A newer item came in, nothing to do here, re-loop
         pass
@@ -60,6 +80,14 @@ class TimerQueue(object):
     return self._queue[0][:3]
 
   def Schedule(self, deadline, action):
+    """Schedule an operation
+
+    Args:
+      deadline - The absolute time this event should occur on.
+      action - The action to run.
+    Returns:
+      A callable that can be invoked to cancel the scheduled operation.
+    """
     if action is None:
       raise Exception("action must be non-null")
 
@@ -70,7 +98,7 @@ class TimerQueue(object):
     timeout_args = [deadline, self._seq, False, action]
     def cancel():
       timeout_args[2] = True
-      # Null out 3-5 to avoid holding onto references.
+      # Null out to avoid holding onto references.
       timeout_args[3] = None
 
     heapq.heappush(self._queue, timeout_args)

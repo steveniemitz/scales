@@ -1,29 +1,36 @@
-from gevent.event import AsyncResult
-
 from .base import PoolSink
-from .. import async_util
+from ..async import AsyncResult
 from ..constants import ChannelState
-from ..sink import ChannelSinkProvider
+from ..sink import SinkProvider
 
 
 class SingletonPoolSink(PoolSink):
+  """A SingletonPool maintains at most one underlying sink, and allows concurrent
+  requests through it.  If the underlying sink fails, it's closed and reopened.
+
+  This sink is intended to be used for transports that can handle concurrent
+  requests, such as multiplexing transports.
+  """
+
   def __init__(self, sink_provider, properties):
     super(SingletonPoolSink, self).__init__(sink_provider, properties)
     self._ref_count = 0
 
-  def Open(self, force=False):
+  def Open(self):
+    """Open the underlying sink and increase the ref count."""
     self._ref_count += 1
-    ar = AsyncResult()
+    if self._ref_count > 1:
+      return AsyncResult.Complete()
+
+    def TryGet():
+      self._Get()
+      return True
     # We don't want to link _Get directly as it'll hold a reference
     # to the sink returned forever.
-    async_util.SafeLink(ar, self._TryGet)
-    return ar
-
-  def _TryGet(self):
-    self._Get()
-    return True
+    return AsyncResult.Run(TryGet)
 
   def Close(self):
+    """Decrease the reference count and, if zero, close the underlying transport."""
     self. _ref_count -= 1
     if self.next_sink and self._ref_count <= 0:
       sink, self.next_sink = self.next_sink, None
@@ -46,7 +53,10 @@ class SingletonPoolSink(PoolSink):
       self.next_sink.on_faulted.Subscribe(self.__PropagateShutdown)
       self.next_sink.Open().wait()
       return self.next_sink
-    elif self.next_sink.state > ChannelState.Open:
+    elif self.next_sink.state == ChannelState.Idle:
+      self.next_sink.Open().wait()
+      return self.next_sink
+    elif self.next_sink.is_closed:
       self.next_sink.on_faulted.Unsubscribe(self.__PropagateShutdown)
       self.next_sink = None
       return self._Get()
@@ -57,4 +67,4 @@ class SingletonPoolSink(PoolSink):
     pass
 
 
-SingletonPoolChannelSinkProvider = ChannelSinkProvider(SingletonPoolSink)
+SingletonPoolChannelSinkProvider = SinkProvider(SingletonPoolSink)

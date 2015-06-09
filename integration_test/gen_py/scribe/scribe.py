@@ -8,7 +8,7 @@
 
 from thrift.Thrift import TType, TMessageType, TException, TApplicationException
 
-from test.gen_py.fb303 import FacebookService
+from integration_test.gen_py.fb303 import FacebookService
 from ttypes import *
 from thrift.Thrift import TProcessor
 from thrift.transport import TTransport

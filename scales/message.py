@@ -28,9 +28,9 @@ class TimeoutError(Exception):
 
 
 class Message(object):
+  """A Message represents the base class for any request."""
   __slots__ = '_properties',
 
-  """The base class for all Messages."""
   def __init__(self):
     self._properties = None
 
@@ -41,24 +41,26 @@ class Message(object):
 
   @property
   def properties(self):
-    """Returns: A dict of properties applying to this message."""
+    """Returns:
+      A dict of properties applying to this message."""
     if not self._properties:
       self._properties = {}
     return self._properties
 
   @property
   def public_properties(self):
-    """Returns: A dict of properties intended to be transported to the server
-    with the method call."""
+    """Returns:
+      A dict of properties intended to be transported to the server
+      with the method call."""
     return { k: v for k,v in self.properties.iteritems()
              if not k.startswith('__') }
 
 
 
 class MethodCallMessage(Message):
+  """A MethodCallMessage represents a method being invoked on a service."""
   __slots__ = ('service', 'method', 'args', 'kwargs')
 
-  """A Message representing a method call."""
   def __init__(self, service, method, args, kwargs):
     """
     Args:
@@ -75,10 +77,10 @@ class MethodCallMessage(Message):
 
 
 class MethodDiscardMessage(Message):
+  """A MethodDiscardMessage represents the intent of the client to discard the
+  response to a message."""
   __slots__ = ('which', 'reason')
 
-  """A Message representing a notification from the client that it has discarded
-  a message, and the server can abort processing."""
   def __init__(self, which, reason):
     """
     Args:
@@ -95,9 +97,9 @@ class MethodDiscardMessage(Message):
 
 
 class MethodReturnMessage(Message):
+  """A message representing the return value from a service call."""
   __slots__ = ('return_value', 'error', 'stack')
 
-  """A message representing the return value from a remote service."""
   def __init__(self, return_value=None, error=None):
     """
     Args:

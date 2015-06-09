@@ -7,7 +7,7 @@ from ..message import (
   ServerError,
   Deadline
 )
-from ..thrift.formatter import MessageSerializer as ThriftMessageSerializer
+from ..thrift.serializer import MessageSerializer as ThriftMessageSerializer
 from .protocol import (
   Headers,
   Rstatus,
@@ -29,7 +29,7 @@ class Tag(object):
 class MessageSerializer(object):
   """A serializer that can serialize/deserialize method calls into the ThriftMux
   wire format."""
-  def __init__(self):
+  def __init__(self, service_cls):
     self._marshal_map = {
       MethodCallMessage: self._Marshal_Tdispatch,
       MethodDiscardMessage: self._Marshal_Tdiscarded,
@@ -39,23 +39,20 @@ class MessageSerializer(object):
       MessageType.Rerr: self._Unmarshal_Rerror,
       MessageType.BAD_Rerr: self._Unmarshal_Rerror,
     }
+    if service_cls:
+      self._thrift_serializer = ThriftMessageSerializer(service_cls)
 
-  @staticmethod
-  def _Marshal_Tdispatch(msg, buf, headers):
+  def _Marshal_Tdispatch(self, msg, buf, headers):
     headers[Headers.MessageType] = MessageType.Tdispatch
     MessageSerializer._WriteContext(msg.public_properties, buf)
     buf.write(pack('!hh', 0, 0)) # len(dst), len(dtab), both unsupported
-    ThriftMessageSerializer.SerializeThriftCall(msg, buf)
-    # It's odd, but even "oneway" thrift messages get a response
-    # with finagle, so we need to allocate a tag and track them still.
-    return msg.service, msg.method
+    self._thrift_serializer.SerializeThriftCall(msg, buf)
 
   @staticmethod
   def _Marshal_Tdiscarded(msg, buf, headers):
     headers[Headers.MessageType] = MessageType.Tdiscarded
     buf.write(pack('!BBB', *Tag(msg.which).Encode()))
     buf.write(msg.reason)
-    return None,
 
   @staticmethod
   def _WriteContext(ctx, buf):
@@ -77,25 +74,24 @@ class MessageSerializer(object):
       sz, = unpack('!h', buf.read(2))
       buf.read(sz)
 
-  @staticmethod
-  def _Unmarshal_Rdispatch(buf, ctx):
+  def _Unmarshal_Rdispatch(self, buf):
     status, nctx = unpack('!bh', buf.read(3))
     for n in range(0, nctx):
-      MessageSerializer._ReadContext(buf)
+      self._ReadContext(buf)
 
     if status == Rstatus.OK:
-      return ThriftMessageSerializer.DeserializeThriftCall(buf, ctx)
+      return self._thrift_serializer.DeserializeThriftCall(buf)
     elif status == Rstatus.NACK:
       return MethodReturnMessage(error=ServerError('The server returned a NACK'))
     else:
       return MethodReturnMessage(error=ServerError(buf.read()))
 
   @staticmethod
-  def _Unmarshal_Rerror(buf, ctx):
+  def _Unmarshal_Rerror(buf):
     why = buf.read()
     return MethodReturnMessage(error=ServerError(why))
 
-  def Unmarshal(self, tag, msg_type, buf, ctx):
+  def Unmarshal(self, tag, msg_type, buf):
     """Deserialize a message from a stream.
 
     Args:
@@ -107,7 +103,7 @@ class MessageSerializer(object):
       A MethodReturnMessage.
     """
     unmarshaller = self._unmarshal_map[msg_type]
-    return unmarshaller(buf, ctx)
+    return unmarshaller(buf)
 
   def Marshal(self, msg, buf, headers):
     """Serialize a message into a stream.
@@ -120,6 +116,6 @@ class MessageSerializer(object):
       A context to be supplied during deserialization.
     """
     marshaller = self._marshal_map[msg.__class__]
-    return marshaller(msg, buf, headers)
+    marshaller(msg, buf, headers)
 
 

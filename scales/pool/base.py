@@ -85,9 +85,7 @@ class ZooKeeperServerSetProvider(ServerSetProvider):
 
 
 class PoolSink(ClientMessageSink):
-  """A pool maintains a set of zero or more transport sinks
-  to a single endpoint."""
-  __metaclass__ = ABCMeta
+  """A pool maintains a set of zero or more sinks to a single endpoint."""
 
   def __init__(self, sink_provider, properties):
     self._properties = properties
@@ -96,46 +94,39 @@ class PoolSink(ClientMessageSink):
 
   @abstractmethod
   def _Get(self):
+    """To be overridden by subclasses.  Called to get a sink from the pool.
+
+    Returns:
+      A sink.
+    """
     raise NotImplementedError()
 
   @abstractmethod
   def _Release(self, sink):
-    raise NotImplementedError()
+    """To be overridden by subclasses.  Called when a sink has completed
+    processing.
 
-  @abstractmethod
-  def Open(self):
-    raise NotImplementedError()
-
-  @abstractmethod
-  def Close(self):
+    Args:
+      sink - A sink that had been previously returned from _Get()
+    """
     raise NotImplementedError()
 
   def AsyncProcessRequest(self, sink_stack, msg, stream, headers):
     """Gets a ClientChannelSink from the pool (asynchronously), and continues
-    the sink chain on it.
+    processing the message on it.
     """
-
-    # Getting a member of the pool may involve a blocking operation.  In order
-    # to maintain a fully asynchronous stack, the rest of the chain is executed
-    # on a worker greenlet.
-    """Continues processing of AsyncProcessRequest"""
     try:
       sink = self._Get()
     except Exception as e:
-      excr = MethodReturnMessage(error=e)
-      sink_stack.AsyncProcessResponseMessage(excr)
+      ex_msg = MethodReturnMessage(error=e)
+      sink_stack.AsyncProcessResponseMessage(ex_msg)
       return
 
     sink_stack.Push(self, sink)
     sink.AsyncProcessRequest(sink_stack, msg, stream, headers)
 
   def AsyncProcessResponse(self, sink_stack, context, stream, msg):
-    """Returns the ClientChannelSink to the pool and delegates to the next sink.
-
-    Args:
-      sink_stack - The sink stack.
-      context - A tuple supplied from AsyncProcessRequest of (shard, channel sink).
-      stream - The stream being processed.
+    """Returns the sink (in 'context') to the pool and delegates to the next sink.
     """
     self._Release(context)
     sink_stack.AsyncProcessResponse(stream, msg)

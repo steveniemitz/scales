@@ -11,7 +11,6 @@ from .pool import (
   ZooKeeperServerSetProvider,
 )
 from .sink import TimeoutSinkProvider
-from .timer_queue import TimerQueue
 
 class _ProxyBase(object):
   def __init__(self, dispatcher):
@@ -68,12 +67,11 @@ class ClientProxyBuilder(object):
 
   @staticmethod
   def CreateServiceClient(Iface):
-    """Creates a proxy class that takes all method on Client
-    and sends them to a dispatcher.
+    """Creates a proxy class that takes all method on Iface and proxies them to
+    a dispatcher.
 
     Args:
       Iface - A class object implementing one or more thrift interfaces.
-      dispatcher - An instance of a MessageDispatcher.
     """
     proxy_cls = ClientProxyBuilder._PROXY_TYPE_CACHE.get(Iface, None)
     if not proxy_cls:
@@ -83,6 +81,8 @@ class ClientProxyBuilder(object):
 
 
 class ScalesUriParser(object):
+  """Default Uri Parser for scales.  Handles both tcp:// and zk:// URIs"""
+
   Endpoint = collections.namedtuple('Endpoint', 'host port')
   Server = collections.namedtuple('Server', 'service_endpoint')
 
@@ -221,10 +221,22 @@ class Scales(object):
       return self
 
     def SetServerSetProvider(self, server_set_provider):
+      """Sets the server set provider.  Must be called after SetUri(), or else
+      SetUri() will overwrite the value set here.
+
+      Args:
+        server_set_provider - A subclass of ServerSetProvider.
+      """
+
       self._server_set_provider = server_set_provider
       return self
 
     def SetName(self, name):
+      """Sets the name of the service.  The name is used in logging and varz.
+
+      Args:
+        name - The friendly service name.
+      """
       self._name = name
       return self
 
@@ -241,6 +253,7 @@ class Scales(object):
 
       properties = {
         SinkProperties.Service: self.name,
+        SinkProperties.ServiceClass: self._service,
         SinkProperties.ServerSetProvider: self.server_set_provider,
         SinkProperties.Timeout: self._timeout
       }
