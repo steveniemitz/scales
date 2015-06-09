@@ -17,8 +17,8 @@ from ..message import (
 )
 from ..sink import (
   ClientMessageSink,
-  ChannelSinkProvider,
-  ChannelSinkProviderBase,
+  SinkProvider,
+  SinkProviderBase,
 )
 from ..thrift.socket import TSocket
 from ..varz import (
@@ -30,7 +30,7 @@ from ..varz import (
   VarzBase,
   VarzSocketWrapper
 )
-from .formatter import (
+from .serializer import (
   MessageSerializer,
   Tag
 )
@@ -94,12 +94,28 @@ class TagPool(object):
 
 
 class SocketTransportSink(ClientMessageSink):
-  """A transport sink for thriftmux servers."""
+  """A transport sink for thriftmux servers.
+  This sink supports concurrent requests over its transport.
+  """
 
   SINK_LOG = ROOT_LOG.getChild('SocketTransportSink')
   _EMPTY_DCT = {}
 
   class Varz(VarzBase):
+    """
+    messages_sent - The number of messages sent over this sink.
+    messages_recv - The number of messages received over this sink.
+    active - 1 if the sink is open, else 0.
+    send_queue_size - The length of the send queue.
+    send_time - The aggregate amount of time spent sending data.
+    recv_time - The aggregate amount of time spend receiving data.
+    send_latency - The average amount of time taken to send a message.
+    recv_latency - The average amount of time taken to receive a message
+                   (once a response has reached the client).
+    transport_latency - The average amount of time taken to perform a full
+                        method call transaction (send data, wait for response,
+                        read response).
+    """
     _VARZ_BASE_NAME = 'scales.thriftmux.SocketTransportSink'
     _VARZ_SOURCE_TYPE = SourceType.ServiceAndEndpoint
     _VARZ = {
@@ -144,7 +160,7 @@ class SocketTransportSink(ClientMessageSink):
   def state(self):
     return self._state
 
-  def Open(self, force=False):
+  def Open(self):
     """Initializes the dispatcher, opening a connection to the remote host.
     This method may only be called once.
     """
@@ -201,8 +217,7 @@ class SocketTransportSink(ClientMessageSink):
     self._send_queue = Queue()
 
   def _SendPingMessage(self):
-    """Constucts and sends a Tping message.
-    """
+    """Constucts and sends a Tping message."""
     self._log.debug('Sending ping message.')
     self._ping_ar = AsyncResult()
     self._last_ping_start = time.time()
@@ -229,8 +244,7 @@ class SocketTransportSink(ClientMessageSink):
       ar.set_exception(Exception("Invalid ping response"))
 
   def _PingLoop(self):
-    """Periodically pings the remote server.
-    """
+    """Periodically pings the remote server."""
     while self.isActive:
       gevent.sleep(30)
       if self.isActive:
@@ -238,19 +252,27 @@ class SocketTransportSink(ClientMessageSink):
       else:
         break
 
-  def _HandleTimeout(self, dct):
-    timeout_event = dct.get(Deadline.EVENT_KEY, None)
+  def _HandleTimeout(self, msg_properties):
+    """Determine if a message has timed out yet (because it waited in the queue
+    for too long).  If it hasn't, initialize the timeout handler to fire if the
+    message times out in transit.
+
+    Args:
+      dct - The properties of the message.
+    """
+
+    timeout_event = msg_properties.get(Deadline.EVENT_KEY, None)
     if timeout_event and timeout_event.Get():
       # The message has timed out before it got out of the send queue
-      # In this case, we can discard it immediatly without even sending it.
-      tag = dct.pop(Tag.KEY, 0)
+      # In this case, we can discard it immediately without even sending it.
+      tag = msg_properties.pop(Tag.KEY, 0)
       if tag != 0:
         self._ReleaseTag(tag)
       return True
     elif timeout_event:
       # The event exists but hasn't been signaled yet, hook up a
       # callback so we can be notified on a timeout.
-      timeout_event.Subscribe(lambda evt: self._OnTimeout(dct), True)
+      timeout_event.Subscribe(lambda evt: self._OnTimeout(msg_properties), True)
       return False
     else:
       # No event was created, so this will never timeout.
@@ -258,11 +280,18 @@ class SocketTransportSink(ClientMessageSink):
 
   @staticmethod
   def _CreateDiscardMessage(tag):
+    """Create a Tdiscarded message for 'tag'
+
+    Args:
+      tag - The message tag to discard.
+    Returns
+      A (message, buffer, headers) tuple suitable for passing to AsyncProcessRequest.
+    """
     discard_message = MethodDiscardMessage(tag, 'Client timeout')
     discard_message.which = tag
     buf = StringIO()
     headers = {}
-    MessageSerializer().Marshal(discard_message, buf, headers)
+    MessageSerializer(None).Marshal(discard_message, buf, headers)
     return discard_message, buf, headers
 
   def _OnTimeout(self, dct):
@@ -279,13 +308,13 @@ class SocketTransportSink(ClientMessageSink):
     while self.isActive:
       try:
         payload, dct = self._send_queue.get()
+        queue_len = self._send_queue.qsize()
+        self._varz.send_queue_size(queue_len)
         # HandleTimeout sets up the transport level timeout handling
         # for this message.  If the message times out in transit, this
         # transport will handle sending a Tdiscarded to the server.
         if self._HandleTimeout(dct): continue
 
-        queue_len = self._send_queue.qsize()
-        self._varz.send_queue_size(queue_len)
         with self._varz.send_time.Measure():
           with self._varz.send_latency.Measure():
             self._socket.write(payload)
@@ -374,7 +403,11 @@ class SocketTransportSink(ClientMessageSink):
   def AsyncProcessResponse(self, sink_stack, context, stream, msg):
     pass
 
+
 class ThriftMuxMessageSerializerSink(ClientMessageSink):
+  """A serializer sink that serializes thrift messages to the finagle mux
+  wire format"""
+
   class Varz(VarzBase):
     _VARZ_BASE_NAME = 'scales.thriftmux.ThrfitMuxMessageSerializerSink'
     _VARZ = {
@@ -385,7 +418,7 @@ class ThriftMuxMessageSerializerSink(ClientMessageSink):
   def __init__(self, next_provider, properties):
     super(ThriftMuxMessageSerializerSink, self).__init__()
     self.next_sink = next_provider.CreateSink(properties)
-    self._serializer = MessageSerializer()
+    self._serializer = MessageSerializer(properties[SinkProperties.ServiceClass])
     self._varz = self.Varz(properties[SinkProperties.Service])
 
   @staticmethod
@@ -412,14 +445,14 @@ class ThriftMuxMessageSerializerSink(ClientMessageSink):
       headers['com.twitter.finagle.Deadline'] = Deadline(deadline)
 
     try:
-      ctx = self._serializer.Marshal(msg, buf, headers)
+      self._serializer.Marshal(msg, buf, headers)
     except Exception as ex:
       self._varz.serialization_failures()
       msg = MethodReturnMessage(error=ex)
       sink_stack.AsyncProcessResponseMessage(msg)
       return
 
-    sink_stack.Push(self, ctx)
+    sink_stack.Push(self)
     self.next_sink.AsyncProcessRequest(sink_stack, msg, buf, headers)
 
   def AsyncProcessResponse(self, sink_stack, context, stream, msg):
@@ -428,15 +461,15 @@ class ThriftMuxMessageSerializerSink(ClientMessageSink):
     else:
       try:
         msg_type, tag = ThriftMuxMessageSerializerSink.ReadHeader(stream)
-        msg = self._serializer.Unmarshal(tag, msg_type, stream, context)
+        msg = self._serializer.Unmarshal(tag, msg_type, stream)
       except Exception as ex:
         self._varz.deserialization_failures()
         msg = MethodReturnMessage(error=ex)
       sink_stack.AsyncProcessResponseMessage(msg)
 
-ThriftMuxMessageSerializerSinkProvider = ChannelSinkProvider(ThriftMuxMessageSerializerSink)
+ThriftMuxMessageSerializerSinkProvider = SinkProvider(ThriftMuxMessageSerializerSink)
 
-class SocketTransportSinkProvider(ChannelSinkProviderBase):
+class SocketTransportSinkProvider(SinkProviderBase):
   def CreateSink(self, properties):
     server = properties[SinkProperties.Endpoint]
     service = properties[SinkProperties.Service]

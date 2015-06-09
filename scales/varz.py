@@ -28,6 +28,7 @@ class SourceType(object):
   MethodAndService = Method | Service
 
 class VarzMetric(object):
+  """An object that can be used to record specific varz."""
   VARZ_TYPE = None
 
   @staticmethod
@@ -37,6 +38,11 @@ class VarzMetric(object):
     return __Adapt
 
   def __init__(self, metric, source):
+    """
+    Args:
+      metric - The metric name.
+      source - An optional source.
+    """
     self._metric = metric
     self._source = source
 
@@ -56,6 +62,13 @@ class VarzMetric(object):
     self._fn(self._metric, *args)
 
   def ForSource(self, source):
+    """Specialize this metric for a specific source.
+
+    Args:
+      source - The source to specialize for.
+    Returns:
+      A VarzMetric of the same type.
+    """
     if not isinstance(source, tuple) or len(source) != 3:
       raise Exception("Source must be a 3-tuple")
 
@@ -66,6 +79,8 @@ class Rate(VarzMetric): VARZ_TYPE = VarzType.Rate
 class Counter(Rate): VARZ_TYPE = VarzType.Counter
 
 class VarzTimerBase(VarzMetric):
+  """A specialization of VarzMetric that also includes a contextmanager
+  to time blocks of code."""
   @contextmanager
   def Measure(self):
     start_time = time.time()
@@ -90,6 +105,25 @@ class VarzMeta(type):
 
 
 class VarzBase(object):
+  """A helper class to create a set of Varz.
+
+  Inheritors should set _VARZ_BASE_NAME as well as _VARZ_SOURCE_TYPE.  Once done,
+  the Varz object can be instantiated with a source, and then metrics invoked as
+  attributes on the object.
+
+  For example:
+    class Varz(VarzBase):
+    _VARZ_BASE_NAME = 'scales.example.varz'
+    _VARZ = {
+      'a_counter': Counter,
+      'a_gauge': Gauge
+    }
+
+    my_varz = Varz('source1')
+    my_varz.a_counter()
+    my_varz.a_gauge(5)
+  """
+
   __metaclass__ = VarzMeta
   _VARZ = {}
   _VARZ_BASE_NAME = None
@@ -122,32 +156,6 @@ class VarzReceiver(object):
   _MAX_PERCENTILE_BUCKET = 1000
 
   @staticmethod
-  def _CalculatePercentiles():
-    while True:
-      gevent.sleep(60)
-      for m in [m for m, d in VarzReceiver.VARZ_METRICS.items()
-                if d[0] == VarzType.AverageTimer]:
-        for source, values in VarzReceiver.VARZ_DATA[m].items():
-          gevent.sleep(0)
-          values = sorted(values)
-          VarzReceiver.VARZ_DATA_PERCENTILES[m][source] = [
-            VarzReceiver.CalculatePercentile(values, pct)
-            for pct in VarzReceiver.VARZ_PERCENTILES
-          ]
-          gevent.sleep(0)
-
-  @staticmethod
-  def CalculatePercentile(values, pct):
-    k = (len(values) - 1) * pct
-    f = math.floor(k)
-    c = math.ceil(k)
-    if f == c:
-      return values[int(k)]
-    d0 = values[int(f)] * (c - k)
-    d1 = values[int(c)] * (k - f)
-    return d0 + d1
-
-  @staticmethod
   def RegisterMetric(metric, varz_type, source_type):
     VarzReceiver.VARZ_METRICS[metric] = (varz_type, source_type)
 
@@ -176,6 +184,7 @@ class VarzReceiver(object):
     queue.append(value)
 
 class VarzAggregator(object):
+  """An aggregator that rolls metrics up to the service level."""
   class _Agg(object):
     __slots__ = 'total', 'count', 'work'
     def __init__(self):
@@ -184,7 +193,27 @@ class VarzAggregator(object):
       self.work = 0.0
 
   @staticmethod
+  def CalculatePercentile(values, pct):
+    k = (len(values) - 1) * pct
+    f = math.floor(k)
+    c = math.ceil(k)
+    if f == c:
+      return values[int(k)]
+    d0 = values[int(f)] * (c - k)
+    d1 = values[int(c)] * (k - f)
+    return d0 + d1
+
+  @staticmethod
   def Aggregate(varz, metrics):
+    """Aggregate varz
+
+    Args:
+      varz - The varz dictionary to aggregate, typically VarzReceiver.VARZ_DATA.
+      metrics - The metric metadata dictionary, typically VarzReceiver.VARZ_METRICS
+    Returns:
+      A dictionary of metric -> service -> aggregate.
+    """
+
     agg = defaultdict(dict)
     for metric in varz.keys():
       metric_info = metrics.get(metric, None)
@@ -212,7 +241,7 @@ class VarzAggregator(object):
         for source_agg in metric_agg.values():
           values = sorted(source_agg.work)
           source_agg.total = [
-            VarzReceiver.CalculatePercentile(values, pct)
+            VarzAggregator.CalculatePercentile(values, pct)
             for pct in VarzReceiver.VARZ_PERCENTILES
           ]
       else:
@@ -289,5 +318,3 @@ class VarzSocketWrapper(object):
       if len(chunk) == 0:
         raise EOFError()
     return buff
-
-gevent.spawn(VarzReceiver._CalculatePercentiles)

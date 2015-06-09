@@ -16,8 +16,8 @@ from ..message import (
   TimeoutError
 )
 from ..sink import (
-  ChannelSinkProvider,
-  ChannelSinkProviderBase,
+  SinkProvider,
+  SinkProviderBase,
   ClientMessageSink,
 )
 from ..thrift.socket import TSocket
@@ -29,14 +29,32 @@ from ..varz import (
   VarzBase,
   VarzSocketWrapper
 )
-from .formatter import MessageSerializer
+from .serializer import MessageSerializer
 
 class NoopTimeout(object):
   def start(self): pass
   def cancel(self): pass
 
 class SocketTransportSink(ClientMessageSink):
+  """A sink to transport thrift method calls over a socket.
+
+  This sink does not support processing multiple messages in parallel and will
+  raise an exception if it detects it is about to.
+  """
   class Varz(VarzBase):
+    """
+    messages_sent - The number of messages sent over this sink.
+    messages_recv - The number of messages received over this sink.
+    send_time - The aggregate amount of time spent sending data.
+    recv_time - The aggregate amount of time spend receiving data.
+    send_latency - The average amount of time taken to send a message.
+    recv_latency - The average amount of time taken to receive a message
+                   (once a response has reached the client).
+    transport_latency - The average amount of time taken to perform a full
+                        method call transaction (send data, wait for response,
+                        read response).
+    """
+
     _VARZ_BASE_NAME = 'scales.thrift.SocketTransportSink'
     _VARZ_SOURCE_TYPE = SourceType.ServiceAndEndpoint
     _VARZ = {
@@ -58,7 +76,7 @@ class SocketTransportSink(ClientMessageSink):
     self._processing = None
     self._open_result = None
 
-  def Open(self, force=False):
+  def Open(self):
     if not self._open_result:
       self._open_result = AsyncResult()
       async_util.SafeLink(self._open_result, self._OpenImpl)
@@ -102,6 +120,14 @@ class SocketTransportSink(ClientMessageSink):
     self._on_faulted.Set(reason)
 
   def _AsyncProcessTransaction(self, data, sink_stack, deadline):
+    """Process a method call/response transaction.
+    When complete the response is dispatched to the sink_stack.
+
+    Args:
+      data - The data to send.
+      sink_stack - The sink_stack for this method call.
+      deadline - The absolute deadline the transaction must complete by.
+    """
     with self._varz.transport_latency.Measure():
       gtimeout = None
       try:
@@ -163,9 +189,12 @@ class SocketTransportSink(ClientMessageSink):
     pass
 
 
-class ThriftFormatterSink(ClientMessageSink):
+class ThriftSerializerSink(ClientMessageSink):
+  """A sink for serializing thrift method calls."""
+
   def __init__(self, next_provider, properties):
-    super(ThriftFormatterSink, self).__init__()
+    super(ThriftSerializerSink, self).__init__()
+    self._serializer = MessageSerializer(properties[SinkProperties.ServiceClass])
     self.next_sink = next_provider.CreateSink(properties)
 
   def AsyncProcessRequest(self, sink_stack, msg, stream, headers):
@@ -177,30 +206,29 @@ class ThriftFormatterSink(ClientMessageSink):
           error=ClientError('Invalid message type.')))
       return
     try:
-      MessageSerializer.SerializeThriftCall(msg, buf)
-      ctx = msg.service, msg.method
+      self._serializer.SerializeThriftCall(msg, buf)
     except Exception as ex:
       sink_stack.AsyncProcessResponseMessage(MethodReturnMessage(error=ex))
       return
 
-    sink_stack.Push(self, ctx)
+    sink_stack.Push(self)
     self.next_sink.AsyncProcessRequest(sink_stack, msg, buf, headers)
 
   def AsyncProcessResponse(self, sink_stack, context, stream, msg):
     if msg:
-      # No need to deserialize, it already is
+      # No need to deserialize, it already is.
       sink_stack.AsyncProcessResponseMessage(msg)
     else:
       try:
-        msg = MessageSerializer.DeserializeThriftCall(stream, context)
+        msg = self._serializer.DeserializeThriftCall(stream)
       except Exception as ex:
         msg = MethodReturnMessage(error=ex)
       sink_stack.AsyncProcessResponseMessage(msg)
 
 
-ThriftFormatterSinkProvider = ChannelSinkProvider(ThriftFormatterSink)
+ThriftFormatterSinkProvider = SinkProvider(ThriftSerializerSink)
 
-class SocketTransportSinkProvider(ChannelSinkProviderBase):
+class SocketTransportSinkProvider(SinkProviderBase):
   def CreateSink(self, properties):
     server = properties[SinkProperties.Endpoint]
     service = properties[SinkProperties.Service]

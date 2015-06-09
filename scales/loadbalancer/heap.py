@@ -1,3 +1,16 @@
+"""Heap Load Balancer.
+
+Based on the heap balancer from finagle, see (https://github.com/twitter/finagle/blob/master/finagle-core/src/main/scala/com/twitter/finagle/loadbalancer/HeapBalancer.scala)
+
+The heap load balancer maintains all nodes in a min-heap.  The heap is adjusted
+as the load on a node increases or decreases.  Nodes start at Zero (min int) and
+increase load as they are used.  Load decreases when they are released back into
+the pool.
+
+Downed nodes are tracked by setting a node's load to > 0.  A linked list of downed
+nodes is kept to resurrect downed nodes if they become active again.
+"""
+
 import random
 
 from .base import (
@@ -12,31 +25,51 @@ from ..sink import (
 
 
 class Heap(object):
+  """A utility class to perform heap functions"""
   @staticmethod
-  def swap(heap, i, j):
+  def Swap(heap, i, j):
+    """Swap two elements in the heap.
+
+    Args:
+      heap - The heap array.
+      i, j - The indexes int the array to swap.
+    """
     heap[i], heap[j] = heap[j], heap[i]
     heap[i].index = i
     heap[j].index = j
 
   @staticmethod
-  def fixUp(heap, i):
+  def FixUp(heap, i):
+    """Traverse up the heap, ensuring the invariant is maintained.
+
+    Args:
+      heap - The heap array.
+      i - The index to start at.
+    """
     while i != 1 and heap[i] < heap[i/2]:
-      Heap.swap(heap, i, i/2)
+      Heap.Swap(heap, i, i/2)
       i /= 2
 
   @staticmethod
-  def fixDown(heap, i, j):
+  def FixDown(heap, i, j):
+    """Traverse down the heap, ensuring the invariant is maintained.
+
+    Args:
+      heap - The heap array.
+      i, j - The node index to traverse from -> to.
+    """
     while True:
       if j < i * 2: break
 
       m = 2 * i if (j == i * 2 or heap[2*i] < heap[2*i+1]) else 2*i+1
       if heap[m] < heap[i]:
-        Heap.swap(heap, i, m)
+        Heap.Swap(heap, i, m)
       else:
         break
 
 
 class HeapBalancerSink(LoadBalancerSink):
+  """A sink that implements a heap load balancer."""
   Penalty = Int.MaxValue
   Zero = Int.MinValue + 1
 
@@ -51,6 +84,7 @@ class HeapBalancerSink(LoadBalancerSink):
       self.downq = None
 
     def __lt__(self, other):
+      """Compare to other, return true if (load, index) < other.(load, index)"""
       if self.load < other.load:
         return True
       else:
@@ -68,7 +102,7 @@ class HeapBalancerSink(LoadBalancerSink):
     else:
       n = self.__Get()
       n.load += 1
-      Heap.fixDown(self._heap, n.index, self._size)
+      Heap.FixDown(self._heap, n.index, self._size)
       self._OnGet(n)
       put_called = [False]
       def PutWrapper():
@@ -97,6 +131,11 @@ class HeapBalancerSink(LoadBalancerSink):
     pass
 
   def __Get(self):
+    """Get the least-loaded node from the heap.
+
+    Returns:
+      A node.
+    """
     while True:
       n = self._downq
       m = None
@@ -112,7 +151,7 @@ class HeapBalancerSink(LoadBalancerSink):
           # The node was resurrected, mark it back up
           self._log.info('Marking node %s up' % n)
           n.load -= self.Penalty
-          Heap.fixUp(self._heap, n.index)
+          Heap.FixUp(self._heap, n.index)
           o = n.downq
           n.downq = None
           n = o
@@ -133,11 +172,17 @@ class HeapBalancerSink(LoadBalancerSink):
         n.downq = self._downq
         self._downq = n
         n.load += self.Penalty
-        Heap.fixDown(self._heap, 1, self._size)
+        Heap.FixDown(self._heap, 1, self._size)
         self._OnNodeDown(n)
         # Loop
 
   def __Put(self, n):
+    """'Return' a member to the heap.  Load on the node is decremented and its
+    position in the heap is adjusted.
+
+    Args:
+      n - The node to return
+    """
     n.load -= 1
     if n.load < self.Zero:
       self._log.warning('Decrementing load below Zero')
@@ -147,30 +192,45 @@ class HeapBalancerSink(LoadBalancerSink):
       n.channel.Close()
     elif n.load == self.Zero and self._size > 1:
       i = n.index
-      Heap.swap(self._heap, i, self._size)
-      Heap.fixDown(self._heap, i, self._size - 1)
+      Heap.Swap(self._heap, i, self._size)
+      Heap.FixDown(self._heap, i, self._size - 1)
 
       j = random.randint(1, self._size)
-      Heap.swap(self._heap, j, self._size)
-      Heap.fixUp(self._heap, j)
+      Heap.Swap(self._heap, j, self._size)
+      Heap.FixUp(self._heap, j)
 
-      Heap.fixUp(self._heap, self._size)
+      Heap.FixUp(self._heap, self._size)
     else:
-      Heap.fixUp(self._heap, n.index)
+      Heap.FixUp(self._heap, n.index)
     self._OnPut(n)
 
-  def _AddNode(self, channel):
-    channel.Open().wait()
-    self._size += 1
-    new_node = self.Node(channel, self.Zero, self._size)
-    self._heap.append(new_node)
-    Heap.fixUp(self._heap, self._size)
+  def _AddNode(self, sink):
+    """Add a sink to the heap.
+    The sink is immediately opened and initialized to Zero load.
 
-  def _RemoveNode(self, channel):
-    i = next(idx for idx, node in enumerate(self._heap) if node.channel == channel)
+    Args:
+      sink - The sink that was just added.
+    """
+    # It's ok if Open() threw an exception here, it'll be detected in __Get
+    # and the node marked down.  We still want downed nodes in the heap.
+    sink.Open().wait()
+    new_node = self.Node(sink, self.Zero, self._size)
+    self._heap.append(new_node)
+    self._size += 1
+    Heap.FixUp(self._heap, self._size)
+
+  def _RemoveNode(self, sink):
+    """Remove a sink from the heap.
+    The sink is closed immediately if it has no outstanding load, otherwise the
+    close is deferred until the sink goes idle.
+
+    Args:
+      sink - The sink to be removed.
+    """
+    i = next(idx for idx, node in enumerate(self._heap) if node.channel == sink)
     node = self._heap[i]
-    Heap.swap(self._heap, i, self._size)
-    Heap.fixDown(self._heap, i, self._size - 1)
+    Heap.Swap(self._heap, i, self._size)
+    Heap.FixDown(self._heap, i, self._size - 1)
     self._heap.pop()
     self._size -= 1
     node.index = -1
@@ -178,13 +238,21 @@ class HeapBalancerSink(LoadBalancerSink):
       node.channel.Close()
 
   def _OnServersChanged(self, endpoint, added):
+    """Invoked by the LoadBalancer when an endpoint joins or leaves the
+    server set.
+
+    Args:
+      endpoint - A tuple of (endpoint, sink).
+      added - True if the endpoint is being added, False if being removed.
+    """
     _, channel = endpoint
     if added:
       self._AddNode(channel)
     else:
       self._RemoveNode(channel)
 
-  def Open(self, force=False):
+  def Open(self):
+    """Open the sink and all underlying nodes."""
     if self._size > 0:
       # Ignore the first sink, it's the FailingChannelSink.
       return async_util.WhenAny([n.channel.Open() for n in self._heap[1:]])
@@ -192,6 +260,7 @@ class HeapBalancerSink(LoadBalancerSink):
       return async_util.Complete()
 
   def Close(self):
+    """Close the sink and all underlying nodes immediately."""
     [n.channel.Close() for n in self._heap]
 
   @property

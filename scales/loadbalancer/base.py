@@ -1,3 +1,8 @@
+"""An abstract base class for load balancer.
+Load balancers track an underlying server set, and return a sink to service a
+request.
+"""
+
 import logging
 
 from gevent.event import Event
@@ -10,6 +15,7 @@ ROOT_LOG = logging.getLogger("scales.loadbalancer")
 class NoMembersError(Exception): pass
 
 class LoadBalancerSink(ClientMessageSink):
+  """Base class for all load balancer sinks."""
   def __init__(self, next_provider, properties):
     self._properties = properties
     service_name = properties[SinkProperties.Service]
@@ -29,11 +35,18 @@ class LoadBalancerSink(ClientMessageSink):
     super(LoadBalancerSink, self).__init__()
 
   def _OnServersChanged(self, instance, added):
+    """Overridable by child classes.  Invoked when servers in the server set are
+    added or removed.
+
+    Args:
+      instance - The server set member being added or removed.
+      added - True if the instance is being added, False if it's being removed.
+    """
     pass
 
   def _AddServer(self, instance):
-    """Adds a servers to the set of servers available to the connection pool.
-    Note: no new connections are created at this time.
+    """Adds a servers to the set of servers available to the load balancer.
+    Note: The new sink is not opened at this time.
 
     Args:
       instance - A Member object to be added to the pool.
@@ -47,8 +60,7 @@ class LoadBalancerSink(ClientMessageSink):
       self._OnServersChanged((instance, channel), True)
 
   def _RemoveServer(self, instance):
-    """Removes a server from the connection pool.  Outstanding connections will
-    be closed lazily.
+    """Removes a server from the load balancer.
 
     Args:
       instance - A Member object to be removed from the pool.
@@ -57,12 +69,12 @@ class LoadBalancerSink(ClientMessageSink):
     self._OnServersChanged((instance, channel), False)
 
   def _OnServerSetJoin(self, instance):
-    """Invoked when an instance joins the cluster (in ZooKeeper).
+    """Invoked when an instance joins the server set.
 
     Args:
       instance - Instance added to the cluster.
     """
-    # callbacks from the ServerSet are delivered serially, so we can guarentee
+    # callbacks from the ServerSet are delivered serially, so we can guarantee
     # that once this unblocks, we'll still get the notifications delivered in
     # the order that they arrived.  Ex: OnJoin(a) -> OnLeave(a)
     self._init_done.wait()
@@ -74,10 +86,7 @@ class LoadBalancerSink(ClientMessageSink):
     self._AddServer(instance)
 
   def _OnServerSetLeave(self, instance):
-    """Invoked when an instance leaves the cluster.
-
-    If the instance leaving the cluster is the chosen shard,
-    then the connections will be reset.
+    """Invoked when an instance leaves the server set.
 
     Args:
       instance - Instance leaving the cluster.
@@ -86,6 +95,3 @@ class LoadBalancerSink(ClientMessageSink):
     self._RemoveServer(instance)
 
     self._log.info("Instance left (%d members)" % len(self._servers))
-
-  def AsyncProcessResponse(self, sink_stack, context, stream, msg):
-    raise Exception("This should never be called.")

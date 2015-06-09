@@ -1,11 +1,20 @@
 import time
 import heapq
 import gevent
+
 from gevent.event import Event
 
 
 class TimerQueue(object):
+  """A timer that provides efficient scheduling of large numbers of events in
+  the near future."""
   def __init__(self, time_source=time.time, resolution=0.05):
+    """
+    Args:
+      time_source - A callable to get the current time (in seconds).
+      resolution - The minimum resolution of the timer.  If set, all events are
+                   quantized to this resolution.
+    """
     self._queue = []
     self._event = Event()
     self._seq = 0
@@ -60,6 +69,14 @@ class TimerQueue(object):
     return self._queue[0][:3]
 
   def Schedule(self, deadline, action):
+    """Schedule an operation
+
+    Args:
+      deadline - The absolute time this event should occur on.
+      action - The action to run.
+    Returns:
+      A callable that can be invoked to cancel the scheduled operation.
+    """
     if action is None:
       raise Exception("action must be non-null")
 
@@ -70,7 +87,7 @@ class TimerQueue(object):
     timeout_args = [deadline, self._seq, False, action]
     def cancel():
       timeout_args[2] = True
-      # Null out 3-5 to avoid holding onto references.
+      # Null out to avoid holding onto references.
       timeout_args[3] = None
 
     heapq.heappush(self._queue, timeout_args)

@@ -4,18 +4,16 @@ from .sink import (
 )
 
 from ..builder import BaseBuilder
-from ..channel_resurrector import ResurrectorChannelSinkProvider
-from ..loadbalancer.aperture import ApertureBalancerChannelSinkProvider
-from ..pool import SingletonPoolChannelSinkProvider
+from ..loadbalancer import ApertureBalancerSinkProvider
+from ..resurrector import ResurrectorSinkProvider
 
 
 class ThriftMux(BaseBuilder):
   """A builder class for building clients to ThriftMux services."""
-  class SinkProvider(BaseBuilder.SinkProvider):
+  class SinkProviderProvider(BaseBuilder.SinkProviderProvider):
     _PROVIDERS = [
       ThriftMuxMessageSerializerSinkProvider,
-      ApertureBalancerChannelSinkProvider,
-      ResurrectorChannelSinkProvider,
-      SingletonPoolChannelSinkProvider,
+      ApertureBalancerSinkProvider,
+      ResurrectorSinkProvider,
       SocketTransportSinkProvider
     ]

@@ -33,7 +33,14 @@ class ServiceClosedError(Exception): pass
 
 class MessageDispatcher(ClientMessageSink):
   """Handles dispatching incoming and outgoing messages to a client sink stack."""
+
   class Varz(VarzBase):
+    """
+    dispatch_messages - The number of messages dispatched.
+    success_messages - The number of successful responses processed.
+    exception_messages - The number of exception responses processed.
+    request_latency - The average time taken to receive a response to a request.
+    """
     _VARZ_BASE_NAME = 'scales.MessageDispatcher'
     _VARZ_SOURCE_TYPE = SourceType.MethodAndService
     _VARZ = {
@@ -51,8 +58,8 @@ class MessageDispatcher(ClientMessageSink):
     """
     Args:
       service - The service interface class this dispatcher is serving.
-      client_stack_builder - A ClientMessageSinkStackBuilder
-      timeout - The default timeout in seconds for any dispatch messages.
+      sink_provider - An instance of a SinkProvider.
+      properties - The properties associated with this service and dispatcher.
     """
     super(MessageDispatcher, self).__init__()
     self._sink_provider = sink_provider
@@ -62,7 +69,7 @@ class MessageDispatcher(ClientMessageSink):
     self._name = properties[SinkProperties.Service]
     self._open_ar = AsyncResult()
 
-  def Open(self, force=False):
+  def Open(self):
     self._open_ar = self.next_sink.Open()
     return self._open_ar
 
@@ -137,8 +144,7 @@ class MessageDispatcher(ClientMessageSink):
     raise NotImplementedError("This should never be called.")
 
   def AsyncProcessResponse(self, sink_stack, context, stream, msg):
-    """Convert a Message into an AsyncResult.
-      Returns no result and throws no exceptions.
+    """Propagate the results from a message onto an AsyncResult.
 
     Args:
       msg - The reply message (a MethodReturnMessage).
