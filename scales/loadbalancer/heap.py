@@ -17,7 +17,7 @@ from .base import (
   LoadBalancerSink,
   NoMembersError
 )
-from .. import async_util
+from ..async import AsyncResult
 from ..constants import (Int, ChannelState)
 from ..sink import (
   FailingMessageSink,
@@ -98,7 +98,7 @@ class HeapBalancerSink(LoadBalancerSink):
 
   def AsyncProcessRequest(self, sink_stack, msg, stream, headers):
     if self._size == 0:
-      return self._heap[0].channel
+      n = self._heap[0]
     else:
       n = self.__Get()
       n.load += 1
@@ -109,9 +109,8 @@ class HeapBalancerSink(LoadBalancerSink):
         if not put_called[0]:
           put_called[0] = True
           self.__Put(n)
-
       sink_stack.Push(self, PutWrapper)
-      n.channel.AsyncProcessRequest(sink_stack, msg, stream, headers)
+    n.channel.AsyncProcessRequest(sink_stack, msg, stream, headers)
 
   def AsyncProcessResponse(self, sink_stack, context, stream, msg):
     context()
@@ -147,7 +146,7 @@ class HeapBalancerSink(LoadBalancerSink):
             self._downq = n
           else:
             m.downq = n
-        elif n.channel.state <= ChannelState.Open:
+        elif n.channel.state == ChannelState.Open:
           # The node was resurrected, mark it back up
           self._log.info('Marking node %s up' % n)
           n.load -= self.Penalty
@@ -164,16 +163,25 @@ class HeapBalancerSink(LoadBalancerSink):
           m, n = n, n.downq
 
       n = self._heap[1]
-      if n.channel.state <= ChannelState.Open or n.load >= 0:
+      if n.channel.state == ChannelState.Open:
         return n
+      elif n.load >= 0:
+        if n.channel.state  == ChannelState.Idle:
+          # This node was the last chance, but still idle.
+          # At this point there's nothing to do but wait for it to open.
+          n.channel.Open().wait()
+        else:
+          return n
       else:
-        self._log.warning('Marking node %s down' % n)
+        if n.channel.state == ChannelState.Closed:
+          self._log.warning('Marking node %s down' % n)
         # Node is now down
         n.downq = self._downq
         self._downq = n
         n.load += self.Penalty
         Heap.FixDown(self._heap, 1, self._size)
-        self._OnNodeDown(n)
+        if n.channel.state == ChannelState.Closed:
+          self._OnNodeDown(n)
         # Loop
 
   def __Put(self, n):
@@ -213,11 +221,15 @@ class HeapBalancerSink(LoadBalancerSink):
     """
     # It's ok if Open() threw an exception here, it'll be detected in __Get
     # and the node marked down.  We still want downed nodes in the heap.
-    sink.Open().wait()
+    self._size += 1
     new_node = self.Node(sink, self.Zero, self._size)
     self._heap.append(new_node)
-    self._size += 1
     Heap.FixUp(self._heap, self._size)
+    # Adding an Open() in here allows us to optimistically assume it'll be opened
+    # before the next message attempts to get it.  However, the Open() will likely
+    # yield, so other code paths need to be aware there is a potentially un-open
+    # sink on the heap.
+    sink.Open().wait()
 
   def _RemoveNode(self, sink):
     """Remove a sink from the heap.
@@ -227,7 +239,10 @@ class HeapBalancerSink(LoadBalancerSink):
     Args:
       sink - The sink to be removed.
     """
-    i = next(idx for idx, node in enumerate(self._heap) if node.channel == sink)
+    i = next((idx for idx, node in enumerate(self._heap) if node.channel == sink), 0)
+    # The sink has already been removed from the heap.
+    if i == 0:
+      return
     node = self._heap[i]
     Heap.Swap(self._heap, i, self._size)
     Heap.FixDown(self._heap, i, self._size - 1)
@@ -255,9 +270,9 @@ class HeapBalancerSink(LoadBalancerSink):
     """Open the sink and all underlying nodes."""
     if self._size > 0:
       # Ignore the first sink, it's the FailingChannelSink.
-      return async_util.WhenAny([n.channel.Open() for n in self._heap[1:]])
+      return AsyncResult.WhenAny([n.channel.Open() for n in self._heap[1:]])
     else:
-      return async_util.Complete()
+      return AsyncResult.Complete()
 
   def Close(self):
     """Close the sink and all underlying nodes immediately."""

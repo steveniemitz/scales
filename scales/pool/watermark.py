@@ -2,10 +2,9 @@ from collections import deque
 import logging
 
 import gevent
-from gevent.event import AsyncResult
 
 from .base import PoolSink
-from .. import async_util
+from ..async import AsyncResult
 from ..constants import (Int, ChannelState, SinkProperties)
 from ..sink import (
   ClientMessageSink,
@@ -34,6 +33,8 @@ class QueuingMessageSink(ClientMessageSink):
   def state(self):
     return ChannelState.Open
 
+
+class MaxWaitersError(Exception): pass
 
 class WatermarkPoolSink(PoolSink):
   """A watermark pool keeps a cached number of sinks active (the low watermark).
@@ -68,8 +69,9 @@ class WatermarkPoolSink(PoolSink):
 
     self._cache = deque()
     self._waiters = deque()
-    self._min_size = 1
-    self._max_size = Int.MaxValue
+    self._min_size = int(properties.get('min_watermark', 1))
+    self._max_size = int(properties.get('max_watermark', Int.MaxValue))
+    self._max_queue_size = int(properties.get('max_watermark_queue', Int.MaxValue))
     self._current_size = 0
     self._state = ChannelState.Idle
     socket_name = '%s:%s' % (endpoint.host, endpoint.port)
@@ -119,12 +121,16 @@ class WatermarkPoolSink(PoolSink):
       sink.on_faulted.Subscribe(self.__PropagateShutdown)
       return sink
     else:
-      self._varz.queue_size(len(self._waiters) + 1)
-      return QueuingMessageSink(self._waiters)
+      if len(self._waiters) + 1 > self._max_queue_size:
+        return FailingMessageSink(MaxWaitersError())
+      else:
+        self._varz.queue_size(len(self._waiters) + 1)
+        return QueuingMessageSink(self._waiters)
 
   def _Release(self, sink):
     # Releasing a queuing sink is a noop
-    if isinstance(sink, QueuingMessageSink):
+    if (isinstance(sink, QueuingMessageSink) or
+        isinstance(sink, FailingMessageSink)):
       self._varz.queue_size(len(self._waiters))
       return
 
@@ -168,7 +174,7 @@ class WatermarkPoolSink(PoolSink):
 
   def Open(self):
     ar = AsyncResult()
-    async_util.SafeLink(ar, self._OpenImpl)
+    ar.SafeLink(self._OpenImpl)
     return ar
 
   def _OpenImpl(self):
@@ -176,11 +182,13 @@ class WatermarkPoolSink(PoolSink):
     self._Release(sink)
     self._state = ChannelState.Open
 
+  def _FlushCache(self):
+    [self._DiscardSink(sink) for sink in self._cache]
+
   def Close(self):
     self._state = ChannelState.Closed
+    self._FlushCache()
     fail_sink = FailingMessageSink(ServiceClosedError)
-
-    [self._DiscardSink(sink) for sink in self._cache]
     [fail_sink.AsyncProcessRequest(sink_stack, msg, stream, headers)
      for sink_stack, msg, stream, headers in self._waiters]
 

@@ -1,10 +1,14 @@
 from __future__ import print_function
 
+from contextlib import contextmanager
+
+from cStringIO import StringIO
 from collections import defaultdict, Counter
 
 import logging
 import random
 import traceback
+import time
 
 import gevent
 from gevent import monkey
@@ -12,15 +16,18 @@ from gevent.event import Event
 
 from scales.core import Scales
 from scales.thriftmux import ThriftMux
+from scales.http import Http
 from scales.pool.singleton import SingletonPoolSink
 from scales.thrift import Thrift
-from scales.varz import (SourceType, VarzReceiver)
+from scales.varz import (SourceType, VarzReceiver, VarzAggregator)
 
 from scales.timer_queue import TimerQueue
 
-from test.gen_py.example_rpc_service import ExampleService
-from test.gen_py.example_rpc_service import ttypes
+from integration_test.gen_py.example_rpc_service import ExampleService
+from integration_test.gen_py.example_rpc_service import ttypes
 monkey.patch_all(thread=False)
+
+import GreenletProfiler
 
 class ServiceMetric(object):
   def __init__(self):
@@ -42,11 +49,13 @@ class ServiceMetric(object):
 
 last_dct = defaultdict(int)
 
+GreenletProfiler.start(builtins=True)
+
 def dump_greenlets():
-  #stats = GreenletProfiler.get_func_stats()
-  #stats.sort('tsub')
-  #stats.print_all()
-  #return
+  stats = GreenletProfiler.get_func_stats()
+  stats.sort('tsub')
+  stats.print_all()
+  return
 
   global last_dct
   import gc
@@ -88,25 +97,20 @@ if __name__ == '__main__':
       services = varz[metric]
       print('%s: ' % str(metric))
       for source in sorted(services.keys()):
-        unpacked_sources = []
-        orig_source = source
-        source = list(source)
-        for st in (SourceType.Method, SourceType.Service, SourceType.Endpoint):
-          if metric_info[1] & st != 0:
-            unpacked_sources.append(source.pop(0))
-          else:
-            unpacked_sources.append(None)
-
-        method, service, endpoint = unpacked_sources
-        print(' - %s, %s, %s = %s' % (method, service, endpoint, str(services[orig_source])))
+        method, service, endpoint = source
+        print(' - %s, %s, %s = %s' % (method, service, endpoint, str(services[source])))
 
   def aggVarz():
+    agg = VarzAggregator.Aggregate(VarzReceiver.VARZ_DATA, VarzReceiver.VARZ_METRICS)
+    pass
+
+  def aggVarz_old():
     aggregated_varz = defaultdict(ServiceMetric)
-  varz = VarzReceiver.VARZ_DATA
-  for metric in varz.keys():
-    prop = VAR_TO_PROPERTY.get(metric)
-    if not prop:
-      continue
+    varz = VarzReceiver.VARZ_DATA
+    for metric in varz.keys():
+      prop = VAR_TO_PROPERTY.get(metric)
+      if not prop:
+        continue
 
     pct_props = (prop + '_50', prop + '_90', prop + '_95', prop + '_99')
     metric_info = VarzReceiver.VARZ_METRICS[metric]
@@ -165,32 +169,63 @@ if __name__ == '__main__':
 
   #test_timer_queue()
 
+  def fn3():
+    client = Http.NewClient('zk://zk.auw1.tellapart.net:2181/service_discovery/auw1/nickp/devel/model-dashboard')
+    ret = client.Get('/csv', model=123, version=1)
+    print(ret.text)
+
+  #fn3()
+
+  @contextmanager
+  def time_it():
+    start_time = time.time()
+    yield
+    print(time.time() - start_time)
+
+  def fn4():
+    with time_it():
+      buf = []
+      for n in range(10000000):
+        buf.append('steve')
+      buf = ''.join(buf)
+      l = len(buf)
+
+    with time_it():
+      buf = ''
+      for n in range(10000000):
+        buf += 'steve'
+      l = len(buf)
+
+    with time_it():
+      buf = StringIO()
+      for n in range(10000000):
+        buf.write('steve')
+  #fn4()
+
   def fn():
     from gen_py.scribe import scribe
     from gen_py.scribe.ttypes import LogEntry
     from gen_py.hello import Hello
 
-    client = Thrift.NewClient(Hello.Iface, 'tcp://localhost:8080')
-    ret = client.hi('hi!')
-    ret = client.hi('hi!')
-    ret = client.hi('hi!')
+    #client = Thrift.NewClient(ExampleService.Iface, 'tcp://localhost:8080')
+    #ret = client.passMessage(ttypes.Message('hi!'))
+    #print(ret)
+    #ret = client.passMessage(ttypes.Message('hi!'))
+    #print(ret)
+    #client.DispatcherClose()
+
+
+    client = ThriftMux.NewClient(ExampleService.Iface, 'tcp://localhost:8080,localhost:8082')
+    ret = client.passMessage(ttypes.Message('hi!'))
     print(ret)
-    client.DispatcherClose()
-
-
-    client = ThriftMux.NewClient(Hello.Iface, 'tcp://localhost:8080')
-    ret = client.hi('hi!')
-    ret = client.hi('hi!')
-    ret = client.hi('hi!')
-    print(ret)
-
-    p = Scales.SERVICE_REGISTRY[Hello.Iface][0]
-    while p:
-      print(p.sink_class)
-      p = p.next_provider
-
-    dumpVarz()
-    return
+    #
+    # p = Scales.SERVICE_REGISTRY[ExampleService.Iface][0]
+    # while p:
+    #   print(p.sink_class)
+    #   p = p.next_provider
+    #
+    # dumpVarz()
+    # return
     #return
     #client = Thrift.newClient(scribe.Iface, 'tcp://ec2-54-161-50-43.compute-1.amazonaws.com:15740')
     #client = Thrift.NewClient(scribe.Iface, 'zk://zk.aue1.tellapart.net:2181/service_discovery/aue1/scribe/devel/agent')
@@ -210,28 +245,30 @@ if __name__ == '__main__':
 
     #ret = client.hi_async('test')
     #print(ret.get())
+    start_time = time.time()
     def fn2(n):
       x = 0
       while True:
         x+=1
+        #if n > 1 and time.time() - start_time > 10:
+        #  break
         try:
-          client.hi('hi!')
+          #client.hi('hi!')
           #client.Log([LogEntry('test', 'steve is cool')])
-          #client.passMessage(ttypes.Message('hi!'))
+          client.passMessage(ttypes.Message('hi!'))
         except:
           traceback.print_exc()
           pass
         gevent.sleep(random.random() / 10)
 
-    for n in range(10):
+    for n in range(2):
       gevent.spawn(fn2, n)
 
     e = Event()
     while True:
       e.wait(10)
-      #aggVarz()
+      aggVarz()
       dumpVarz()
       #dump_greenlets()
       #dumpVarz(VarzReceiver.VARZ_DATA_PERCENTILES)
-
   fn()

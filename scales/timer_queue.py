@@ -1,9 +1,12 @@
-import time
 import heapq
+import logging
+import time
 import gevent
+
 
 from gevent.event import Event
 
+LOG = logging.getLogger('scales.TimerQueue')
 
 class TimerQueue(object):
   """A timer that provides efficient scheduling of large numbers of events in
@@ -20,7 +23,11 @@ class TimerQueue(object):
     self._seq = 0
     self._resolution = resolution
     self._time_source = time_source
-    gevent.spawn(self._TimerWorker)
+    self._worker = gevent.spawn(self._TimerWorker)
+
+  def __del__(self):
+    self._worker.kill(block=False)
+    self._worker = None
 
   def _TimerWorker(self):
     while True:
@@ -56,11 +63,15 @@ class TimerQueue(object):
       if wait_timed_out:
         # Nothing newer came in before it timed out.
         at, seq, cancelled, action = heapq.heappop(self._queue)
+        # This is an assert that should never occur, if it does, we somehow
+        # ran events out of order.
         if seq != peeked_seq:
-          raise Exception("seq != peeked_seq")
+          LOG.critical("seq != peeked_seq [%d, %d]" % (seq, peeked_seq))
         if not cancelled:
           # Run it
           gevent.spawn(action)
+          # Clear the reference out in this loop
+          del action
       else:
         # A newer item came in, nothing to do here, re-loop
         pass

@@ -47,12 +47,12 @@ class ResurrectorSink(ClientMessageSink):
   def AsyncProcessResponse(self, sink_stack, context, stream, msg):
     raise NotImplementedError("This should never be called")
 
-  def _OnSinkClosed(self, val):
+  def _OnSinkFaulted(self, val):
     if not self._down_on:
       self._down_on = time.time()
       sink, self.next_sink = self.next_sink, None
       sink.Close()
-      sink.on_faulted.Unsubscribe(self._OnSinkClosed)
+      sink.on_faulted.Unsubscribe(self._OnSinkFaulted)
       self._resurrector = gevent.spawn(self._TryResurrect)
     self.on_faulted.Set(val)
 
@@ -62,15 +62,15 @@ class ResurrectorSink(ClientMessageSink):
     self._log.info('Attempting to reopen faulted channel')
     while True:
       gevent.sleep(wait_interval)
-      down_time = time.time() - last_attempt
-      last_attempt = time.time()
+      now = time.time()
+      down_time, last_attempt = now - last_attempt, now
       self._varz.time_failed(down_time)
 
       sink = self._next_factory.CreateSink(self._properties)
       try:
         self._varz.reconnect_attempts()
         sink.Open().get()
-        sink.on_faulted.Subscribe(self._OnSinkClosed)
+        sink.on_faulted.Subscribe(self._OnSinkFaulted)
         self.next_sink = sink
         self._down_on = None
         self._log.info('Reopened channel.')
@@ -85,7 +85,7 @@ class ResurrectorSink(ClientMessageSink):
   def Open(self):
     if not self.next_sink:
       self.next_sink = self._next_factory.CreateSink(self._properties)
-      self.next_sink.on_faulted.Subscribe(self._OnSinkClosed)
+      self.next_sink.on_faulted.Subscribe(self._OnSinkFaulted)
     return self.next_sink.Open()
 
   def Close(self):
@@ -93,7 +93,7 @@ class ResurrectorSink(ClientMessageSink):
       self._resurrector.kill()
     self._down_on = None
     if self.next_sink:
-      self.next_sink.on_faulted.Unsubscribe(self._OnSinkClosed)
+      self.next_sink.on_faulted.Unsubscribe(self._OnSinkFaulted)
       self.next_sink.Close()
 
   @property

@@ -11,7 +11,6 @@ from .pool import (
   ZooKeeperServerSetProvider,
 )
 from .sink import TimeoutSinkProvider
-from .timer_queue import TimerQueue
 
 class _ProxyBase(object):
   def __init__(self, dispatcher):

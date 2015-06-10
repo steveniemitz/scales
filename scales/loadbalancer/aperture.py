@@ -47,7 +47,7 @@ class Ema(object):
     """
     self._window = window
     self._time = -1
-    self._ema = 0
+    self._ema = 0.0
 
   def Update(self, ts, sample):
     """Update the EMA with a new sample
@@ -59,7 +59,7 @@ class Ema(object):
     """
     if self._time == -1:
       self._time = ts
-      self._ema = sample
+      self._ema = float(sample)
     else:
       delta = ts - self._time
       self._time = ts
@@ -146,8 +146,7 @@ class ApertureBalancerSink(HeapBalancerSink):
     """
     sinks = self._idle_sinks.copy()
     while any(sinks):
-      new_sink, = random.sample(sinks, 1)
-      sinks.discard(new_sink)
+      new_sink = sinks.pop()
       if new_sink.state != ChannelState.Closed:
         self._idle_sinks.discard(new_sink)
         self._active_sinks.add(new_sink)
@@ -164,13 +163,26 @@ class ApertureBalancerSink(HeapBalancerSink):
     min size.
     """
     if len(self._active_sinks) > self._min_size:
-      self._log.debug('Contracting aperture')
-      # The end of the heap will be the most-loaded-ish.
-      most_loaded = self._heap[-1].channel
-      self._active_sinks.discard(most_loaded)
-      self._idle_sinks.add(most_loaded)
-      super(ApertureBalancerSink, self)._RemoveNode(most_loaded)
+      heap_range = len(self._heap) / 2
+      most_loaded = None
+      # Scan the right half of the heap for the least-loaded node.
+      for n in self._heap[heap_range:]:
+        if not most_loaded or n.load > most_loaded.load:
+          most_loaded = n
+      most_loaded_sink = most_loaded.channel
+      self._active_sinks.discard(most_loaded_sink)
+      self._idle_sinks.add(most_loaded_sink)
+      self._log.debug('Contracting aperture to remove %s' % most_loaded_sink)
+      super(ApertureBalancerSink, self)._RemoveNode(most_loaded_sink)
       self._UpdateSizeVarz()
+
+  def _OnNodeDown(self, node):
+    """Invoked by the base class when a node is marked down.
+    In this case, if the downed node is currently in the aperture, we want to
+    remove if, and then attempt to adjust the aperture
+    """
+    if node.channel in self._active_sinks:
+      self._TryExpandAperture()
 
   def _OnGet(self, node):
     """Invoked by the parent class when a node has been retrieved from the pool
@@ -195,8 +207,12 @@ class ApertureBalancerSink(HeapBalancerSink):
     self._total += amount
     avg = self._ema.Update(self._time.Sample(), self._total)
     aperture_size = len(self._active_sinks)
-    aperture_load = avg / aperture_size
-    self.__varz.load_average(aperture_load)
+    if aperture_size == 0:
+      # Essentially infinite load.
+      aperture_load = self._max_load
+    else:
+      aperture_load = avg / aperture_size
+      self.__varz.load_average(aperture_load)
     if aperture_load >= self._max_load and any(self._idle_sinks):
       self._TryExpandAperture()
     elif aperture_load <= self._min_load and aperture_size > self._min_size:

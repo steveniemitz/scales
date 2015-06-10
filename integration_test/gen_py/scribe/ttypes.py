@@ -7,7 +7,7 @@
 #
 
 from thrift.Thrift import TType, TMessageType, TException, TApplicationException
-from test.gen_py.fb303 import ttypes
+from integration_test.gen_py.fb303 import ttypes
 
 
 from thrift.transport import TTransport

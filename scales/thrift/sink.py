@@ -3,10 +3,8 @@ from cStringIO import StringIO
 import time
 
 import gevent
-from gevent.event import AsyncResult
-from thrift.transport import TTransport
 
-from .. import async_util
+from ..async import AsyncResult
 from ..constants import (ChannelState, SinkProperties)
 from ..message import (
   ClientError,
@@ -30,6 +28,8 @@ from ..varz import (
   VarzSocketWrapper
 )
 from .serializer import MessageSerializer
+
+class ChannelConcurrencyError(Exception): pass
 
 class NoopTimeout(object):
   def start(self): pass
@@ -79,14 +79,14 @@ class SocketTransportSink(ClientMessageSink):
   def Open(self):
     if not self._open_result:
       self._open_result = AsyncResult()
-      async_util.SafeLink(self._open_result, self._OpenImpl)
+      self._open_result.SafeLink(self._OpenImpl)
     return self._open_result
 
   def _OpenImpl(self):
     try:
       self._socket.open()
       self._state = ChannelState.Open
-    except TTransport.TTransportException:
+    except Exception:
       self._Fault('Open failed')
       raise
 
@@ -177,7 +177,8 @@ class SocketTransportSink(ClientMessageSink):
   def AsyncProcessRequest(self, sink_stack, msg, stream, headers):
     if self._processing is not None:
       sink_stack.AsyncProcessResponseMessage(MethodReturnMessage(
-        error=Exception('Concurrency violation in AsyncProcessRequest')))
+        error=ChannelConcurrencyError(
+          'Concurrency violation in AsyncProcessRequest')))
       return
 
     payload = stream.getvalue()

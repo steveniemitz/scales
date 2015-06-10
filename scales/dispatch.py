@@ -3,8 +3,8 @@
 import time
 
 import gevent
-from gevent.event import AsyncResult
 
+from .async import AsyncResult
 from .constants import SinkProperties
 from .message import (
   Deadline,
@@ -62,7 +62,6 @@ class MessageDispatcher(ClientMessageSink):
       properties - The properties associated with this service and dispatcher.
     """
     super(MessageDispatcher, self).__init__()
-    self._sink_provider = sink_provider
     self.next_sink = sink_provider.CreateSink(properties)
     self._dispatch_timeout = properties[SinkProperties.Timeout]
     self._service = service
@@ -97,12 +96,29 @@ class MessageDispatcher(ClientMessageSink):
       raise Exception('Dispatcher not open.')
 
     timeout = timeout or self._dispatch_timeout
-    now = time.time()
-    self._open_ar.wait(timeout)
+    start_time = time.time()
+    if self._open_ar.ready():
+      return self._DispatchMethod(self._open_ar, method, args, kwargs, timeout, start_time)
+    else:
+      # _DispatchMethod returns an AsyncResult, so we end up with an
+      # AsyncResult<AsyncResult<TRet>>, Unwrap() removes one layer, yielding
+      # an AsyncResult<TRet>
+      return self._open_ar.ContinueWith(
+          lambda ar: self._DispatchMethod(ar, method, args, kwargs, timeout, start_time)
+      ).Unwrap()
+
+  def _DispatchMethod(self, open_result, method, args, kwargs, timeout, start_time):
+    if open_result.exception:
+      return open_result
+
+    open_time = time.time()
+    open_latency = open_time - start_time
 
     disp_msg = MethodCallMessage(self._service, method, args, kwargs)
     if timeout:
-      deadline = now + timeout
+      # Calculate the deadline for this method call.
+      # Reduce it by the time it took for the open() to complete.
+      deadline = start_time + timeout - open_latency
       disp_msg.properties[Deadline.KEY] = deadline
 
     source = method, self._name, None
@@ -110,7 +126,7 @@ class MessageDispatcher(ClientMessageSink):
 
     ar = AsyncResult()
     sink_stack = ClientMessageSinkStack()
-    sink_stack.Push(self, (source, time.time(), ar))
+    sink_stack.Push(self, (source, start_time, ar))
     gevent.spawn(self.next_sink.AsyncProcessRequest, sink_stack, disp_msg, None, {})
     return ar
 

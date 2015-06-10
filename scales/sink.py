@@ -5,6 +5,8 @@
  calls the next sink until the chain terminates.  On the response side, sinks
  cooperatively propagate the response to the next via a sink stack.
 """
+import time
+
 from abc import (
   ABCMeta,
   abstractmethod,
@@ -12,7 +14,7 @@ from abc import (
 )
 from collections import deque
 
-from . import async_util
+from .async import AsyncResult
 from .constants import (ChannelState, SinkProperties)
 from .observable import Observable
 from .message import (
@@ -86,7 +88,7 @@ class ClientMessageSink(MessageSink):
     if self.next_sink:
       return self.next_sink.Open()
     else:
-      return async_util.Complete()
+      return AsyncResult.Complete()
 
   def Close(self):
     if self.next_sink:
@@ -154,6 +156,7 @@ class ClientMessageSinkStack(SinkStack):
   The ClientMessageSinkStack forwards AsyncProcessResponse to the next sink
   on the stack.
   """
+  __slots__ = '_initial_greenlet',
 
   def __init__(self):
     """
@@ -161,6 +164,7 @@ class ClientMessageSinkStack(SinkStack):
       reply_sink - An optional ReplySink.
     """
     super(ClientMessageSinkStack, self).__init__()
+    self._initial_greenlet = None
 
   def AsyncProcessResponse(self, stream, msg):
     """Pop the next sink off the stack and call AsyncProcessResponse on it."""
@@ -211,7 +215,8 @@ class ClientTimeoutSink(ClientMessageSink):
     timeout elapses, the event on the message will be signaled, and a timeout
     message posted to the sink_stack, aborting the message call.
     """
-    evt.Set(True)
+    if evt:
+      evt.Set(True)
     self._varz.timeouts()
     error_msg = MethodReturnMessage(error=TimeoutError())
     sink_stack.AsyncProcessResponseMessage(error_msg)
@@ -226,6 +231,11 @@ class ClientTimeoutSink(ClientMessageSink):
     """
     deadline = msg.properties.get(Deadline.KEY)
     if deadline:
+      now = time.time()
+      if deadline < now:
+        self._TimeoutHelper(None, sink_stack)
+        return
+
       evt = Observable()
       msg.properties[Deadline.EVENT_KEY] = evt
       cancel_timeout = GLOBAL_TIMER_QUEUE.Schedule(deadline, lambda: self._TimeoutHelper(evt, sink_stack))

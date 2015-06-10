@@ -4,10 +4,9 @@ from struct import (pack, unpack)
 from cStringIO import StringIO
 
 import gevent
-from gevent.event import AsyncResult
 from gevent.queue import Queue
 
-from .. import async_util
+from ..async import AsyncResult
 from ..constants import (ChannelState, SinkProperties)
 from ..message import (
   ClientError,
@@ -23,6 +22,7 @@ from ..sink import (
 from ..thrift.socket import TSocket
 from ..varz import (
   AggregateTimer,
+  AverageRate,
   AverageTimer,
   Counter,
   Gauge,
@@ -167,7 +167,7 @@ class SocketTransportSink(ClientMessageSink):
     if not self._open_result:
       self._Init()
       self._open_result = AsyncResult()
-      async_util.SafeLink(self._open_result, self._OpenImpl)
+      self._open_result.SafeLink(self._OpenImpl)
     return self._open_result
 
   def _OpenImpl(self):
@@ -412,7 +412,9 @@ class ThriftMuxMessageSerializerSink(ClientMessageSink):
     _VARZ_BASE_NAME = 'scales.thriftmux.ThrfitMuxMessageSerializerSink'
     _VARZ = {
       'deserialization_failures': Counter,
-      'serialization_failures': Counter
+      'serialization_failures': Counter,
+      'message_bytes_sent': AverageRate,
+      'message_bytes_recv': AverageRate
     }
 
   def __init__(self, next_provider, properties):
@@ -452,6 +454,7 @@ class ThriftMuxMessageSerializerSink(ClientMessageSink):
       sink_stack.AsyncProcessResponseMessage(msg)
       return
 
+    self._varz.message_bytes_sent(buf.tell())
     sink_stack.Push(self)
     self.next_sink.AsyncProcessRequest(sink_stack, msg, buf, headers)
 
@@ -462,6 +465,7 @@ class ThriftMuxMessageSerializerSink(ClientMessageSink):
       try:
         msg_type, tag = ThriftMuxMessageSerializerSink.ReadHeader(stream)
         msg = self._serializer.Unmarshal(tag, msg_type, stream)
+        self._varz.message_bytes_recv(stream.tell())
       except Exception as ex:
         self._varz.deserialization_failures()
         msg = MethodReturnMessage(error=ex)

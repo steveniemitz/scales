@@ -4,7 +4,7 @@ import gevent
 import requests
 from requests import exceptions
 
-from .. import async_util
+from ..async import AsyncResult
 from ..constants import ChannelState, SinkProperties
 from ..sink import (ClientMessageSink, SinkProvider)
 from ..message import (MethodReturnMessage, TimeoutError)
@@ -13,7 +13,7 @@ class HttpTransportSink(ClientMessageSink):
   def __init__(self, next_provider, properties):
     super(HttpTransportSink, self).__init__()
     self._endpoint = properties[SinkProperties.Endpoint]
-    self._open_result = async_util.Complete()
+    self._open_result = AsyncResult.Complete()
     self._session = requests.Session()
 
   def Open(self):

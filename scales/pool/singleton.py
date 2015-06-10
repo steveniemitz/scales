@@ -1,7 +1,5 @@
-from gevent.event import AsyncResult
-
 from .base import PoolSink
-from .. import async_util
+from ..async import AsyncResult
 from ..constants import ChannelState
 from ..sink import SinkProvider
 
@@ -21,15 +19,15 @@ class SingletonPoolSink(PoolSink):
   def Open(self):
     """Open the underlying sink and increase the ref count."""
     self._ref_count += 1
-    ar = AsyncResult()
+    if self._ref_count > 1:
+      return AsyncResult.Complete()
 
     def TryGet():
       self._Get()
       return True
     # We don't want to link _Get directly as it'll hold a reference
     # to the sink returned forever.
-    async_util.SafeLink(ar, TryGet)
-    return ar
+    return AsyncResult.Run(TryGet)
 
   def Close(self):
     """Decrease the reference count and, if zero, close the underlying transport."""
@@ -55,7 +53,10 @@ class SingletonPoolSink(PoolSink):
       self.next_sink.on_faulted.Subscribe(self.__PropagateShutdown)
       self.next_sink.Open().wait()
       return self.next_sink
-    elif self.next_sink.state > ChannelState.Open:
+    elif self.next_sink.state == ChannelState.Idle:
+      self.next_sink.Open().wait()
+      return self.next_sink
+    elif self.next_sink.is_closed:
       self.next_sink.on_faulted.Unsubscribe(self.__PropagateShutdown)
       self.next_sink = None
       return self._Get()

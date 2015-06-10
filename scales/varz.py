@@ -18,6 +18,7 @@ class VarzType(object):
   AggregateTimer = 3
   Counter = 4
   AverageTimer = 5
+  AverageRate = 6
 
 class SourceType(object):
   Method = 1
@@ -48,8 +49,8 @@ class VarzMetric(object):
 
     if self.VARZ_TYPE == VarzType.Gauge:
       self._fn = VarzReceiver.SetVarz
-    elif self.VARZ_TYPE == VarzType.AverageTimer:
-      self._fn = VarzReceiver.RecordTimerSample
+    elif self.VARZ_TYPE in (VarzType.AverageTimer, VarzType.AverageRate):
+      self._fn = VarzReceiver.RecordPercentileSample
     else:
       self._fn = VarzReceiver.IncrementVarz
 
@@ -76,6 +77,7 @@ class VarzMetric(object):
 
 class Gauge(VarzMetric): VARZ_TYPE = VarzType.Gauge
 class Rate(VarzMetric): VARZ_TYPE = VarzType.Rate
+class AverageRate(VarzMetric): VARZ_TYPE = VarzType.AverageRate
 class Counter(Rate): VARZ_TYPE = VarzType.Counter
 
 class VarzTimerBase(VarzMetric):
@@ -170,7 +172,7 @@ class VarzReceiver(object):
     VarzReceiver.VARZ_DATA[metric][source] = value
 
   @classmethod
-  def RecordTimerSample(cls, source, metric, value):
+  def RecordPercentileSample(cls, source, metric, value):
     if random.random() > VarzReceiver._PERCENTILE_P:
       return
 
@@ -230,20 +232,24 @@ class VarzAggregator(object):
           if isinstance(data, deque):
             metric_agg[service].work = []
 
-        metric_agg[service].work += data
+        if isinstance(data, deque):
+          metric_agg[service].work += random.sample(data, int(len(data) * .1))
+        else:
+          metric_agg[service].work += data
         metric_agg[service].count += 1
 
       if varz_type in (VarzType.AggregateTimer, VarzType.Counter,
                        VarzType.Gauge, VarzType.Rate):
         for source_agg in metric_agg.values():
           source_agg.total = source_agg.work
-      elif varz_type == VarzType.AverageTimer:
+      elif varz_type in (VarzType.AverageTimer, VarzType.AverageRate):
         for source_agg in metric_agg.values():
           values = sorted(source_agg.work)
           source_agg.total = [
             VarzAggregator.CalculatePercentile(values, pct)
             for pct in VarzReceiver.VARZ_PERCENTILES
           ]
+          source_agg.work = None
       else:
         for source_agg in metric_agg.values():
           source_agg.total = source_agg.work / source_agg.count
