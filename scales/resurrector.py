@@ -40,6 +40,9 @@ class ResurrectorSink(ClientMessageSink):
 
   def AsyncProcessRequest(self, sink_stack, msg, stream, headers):
     if self.next_sink is None:
+      # Yield to prevent starvation of the resurrector greenlet if every
+      # sink fails.
+      gevent.sleep(0)
       sink_stack.AsyncProcessResponseMessage(MethodReturnMessage(error=FailedFastError()))
     else:
       self.next_sink.AsyncProcessRequest(sink_stack, msg, stream, headers)

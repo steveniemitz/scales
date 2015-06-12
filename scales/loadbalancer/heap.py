@@ -46,9 +46,12 @@ class Heap(object):
       heap - The heap array.
       i - The index to start at.
     """
-    while i != 1 and heap[i] < heap[i/2]:
-      Heap.Swap(heap, i, i/2)
-      i /= 2
+    while True:
+      if i != 1 and heap[i] < heap[i/2]:
+        Heap.Swap(heap, i, i/2)
+        i /= 2 # FixUp(heap, i/2)
+      else:
+        break
 
   @staticmethod
   def FixDown(heap, i, j):
@@ -64,6 +67,7 @@ class Heap(object):
       m = 2 * i if (j == i * 2 or heap[2*i] < heap[2*i+1]) else 2*i+1
       if heap[m] < heap[i]:
         Heap.Swap(heap, i, m)
+        i = m  # FixDown(heap, m, j)
       else:
         break
 
@@ -85,7 +89,9 @@ class HeapBalancerSink(LoadBalancerSink):
 
     def __lt__(self, other):
       """Compare to other, return true if (load, index) < other.(load, index)"""
-      if self.load < other.load:
+      if self.load > other.load:
+        return False
+      elif self.load < other.load:
         return True
       else:
         return self.index < other.index
@@ -194,6 +200,7 @@ class HeapBalancerSink(LoadBalancerSink):
     n.load -= 1
     if n.load < self.Zero:
       self._log.warning('Decrementing load below Zero')
+      n.load = self.Zero
     if n.index < 0 and n.load > self.Zero:
       pass
     elif n.index < 0 and n.load == self.Zero:
@@ -206,7 +213,6 @@ class HeapBalancerSink(LoadBalancerSink):
       j = random.randint(1, self._size)
       Heap.Swap(self._heap, j, self._size)
       Heap.FixUp(self._heap, j)
-
       Heap.FixUp(self._heap, self._size)
     else:
       Heap.FixUp(self._heap, n.index)

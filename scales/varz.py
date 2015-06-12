@@ -233,7 +233,7 @@ class VarzAggregator(object):
             metric_agg[service].work = []
 
         if isinstance(data, deque):
-          metric_agg[service].work += random.sample(data, int(len(data) * .1))
+          metric_agg[service].work.append(data)
         else:
           metric_agg[service].work += data
         metric_agg[service].count += 1
@@ -244,7 +244,12 @@ class VarzAggregator(object):
           source_agg.total = source_agg.work
       elif varz_type in (VarzType.AverageTimer, VarzType.AverageRate):
         for source_agg in metric_agg.values():
-          values = sorted(source_agg.work)
+          pct_sample = 1.0 / source_agg.count
+          values = []
+          for v in source_agg.work:
+            values.extend(random.sample(v, int(len(v) * pct_sample)))
+          values = sorted(values)
+
           source_agg.total = [
             VarzAggregator.CalculatePercentile(values, pct)
             for pct in VarzReceiver.VARZ_PERCENTILES
@@ -252,7 +257,7 @@ class VarzAggregator(object):
           source_agg.work = None
       else:
         for source_agg in metric_agg.values():
-          source_agg.total = source_agg.work / source_agg.count
+          source_agg.total = float(source_agg.work) / source_agg.count
 
     return agg
 
@@ -294,11 +299,14 @@ class VarzSocketWrapper(object):
     self._varz.bytes_recv(len(buff))
     return buff
 
+  def recv_into(self, buf, sz):
+    return self._socket.handle.recv_into(buf, sz)
+
   def flush(self):
     pass
 
   def write(self, buff):
-    self._socket.write(buff)
+    self._socket.handle.sendall(buff)
     self._varz.bytes_sent(len(buff))
 
   def open(self):
@@ -315,12 +323,14 @@ class VarzSocketWrapper(object):
       self._socket.close()
 
   def readAll(self, sz):
-    buff = ''
+    buff = bytearray(sz)
+    view = memoryview(buff)
     have = 0
     while have < sz:
-      chunk = self.read(sz - have)
-      have += len(chunk)
-      buff += chunk
-      if len(chunk) == 0:
+      read_size = sz - have
+      chunk_len = self.recv_into(view[have:], read_size)
+      have += chunk_len
+      if chunk_len == 0:
         raise EOFError()
+    self._varz.bytes_recv(sz)
     return buff

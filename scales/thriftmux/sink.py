@@ -331,7 +331,7 @@ class SocketTransportSink(ClientMessageSink):
     """
     while self.isActive:
       try:
-        sz, = unpack('!i', self._socket.readAll(4))
+        sz, = unpack('!i', str(self._socket.readAll(4)))
         with self._varz.recv_time.Measure():
           with self._varz.recv_latency.Measure():
             buf = StringIO(self._socket.readAll(sz))
@@ -433,7 +433,8 @@ class ThriftMuxMessageSerializerSink(ClientMessageSink):
     Returns:
       A tuple of (message_type, tag)
     """
-    header, = unpack('!i', stream.read(4))
+    # Python 2.7.3 needs a string to unpack, so cast to one.
+    header, = unpack('!i', str(stream.read(4)))
     msg_type = (256 - (header >> 24 & 0xff)) * -1
     tag = ((header << 8) & 0xFFFFFFFF) >> 8
     return msg_type, tag
