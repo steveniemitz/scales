@@ -8,10 +8,10 @@ from ..pool import SingletonPoolChannelSinkProvider
 
 
 class _HttpIface(object):
-  def Get(self, url, args):
+  def Get(self, url, **kwargs):
     pass
 
-  def Post(self, url, args):
+  def Post(self, url, **kwargs):
     pass
 
 

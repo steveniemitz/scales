@@ -15,6 +15,7 @@ import random
 import time
 
 from .heap import HeapBalancerSink
+from ..async import AsyncResult
 from ..constants import (ChannelState, SinkProperties)
 from ..sink import SinkProvider
 from ..varz import (
@@ -145,15 +146,21 @@ class ApertureBalancerSink(HeapBalancerSink):
     The aperture can be expanded if there are idle sinks available.
     """
     sinks = self._idle_sinks.copy()
+    added_node = None
     while any(sinks):
       new_sink = sinks.pop()
       if new_sink.state != ChannelState.Closed:
         self._idle_sinks.discard(new_sink)
         self._active_sinks.add(new_sink)
         self._log.debug('Expanding aperture.')
-        super(ApertureBalancerSink, self)._AddNode(new_sink)
+        added_node = super(ApertureBalancerSink, self)._AddNode(new_sink)
         break
+
     self._UpdateSizeVarz()
+    if added_node:
+      return added_node
+    else:
+      return AsyncResult.Complete()
 
   def _ContractAperture(self):
     """Attempt to contract the aperture.  By calling this it's assume the aperture
@@ -182,7 +189,9 @@ class ApertureBalancerSink(HeapBalancerSink):
     remove if, and then attempt to adjust the aperture
     """
     if node.channel in self._active_sinks:
-      self._TryExpandAperture()
+      return self._TryExpandAperture()
+    else:
+      return AsyncResult.Complete()
 
   def _OnGet(self, node):
     """Invoked by the parent class when a node has been retrieved from the pool

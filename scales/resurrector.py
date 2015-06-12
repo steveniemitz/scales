@@ -30,6 +30,7 @@ class ResurrectorSink(ClientMessageSink):
     endpoint = properties[SinkProperties.Endpoint]
     service = properties[SinkProperties.Service]
     endpoint_source = '%s:%d' % (endpoint.host, endpoint.port)
+    self.endpoint = endpoint_source
     self._log = ROOT_LOG.getChild('[%s.%s]' % (service, endpoint_source))
     self._properties = properties
     self._next_factory = next_factory
@@ -40,6 +41,9 @@ class ResurrectorSink(ClientMessageSink):
 
   def AsyncProcessRequest(self, sink_stack, msg, stream, headers):
     if self.next_sink is None:
+      # Yield to prevent starvation of the resurrector greenlet if every
+      # sink fails.
+      gevent.sleep(0)
       sink_stack.AsyncProcessResponseMessage(MethodReturnMessage(error=FailedFastError()))
     else:
       self.next_sink.AsyncProcessRequest(sink_stack, msg, stream, headers)
@@ -104,5 +108,6 @@ class ResurrectorSink(ClientMessageSink):
       return ChannelState.Idle
     else:
       return self.next_sink.state
+
 
 ResurrectorSinkProvider = SinkProvider(ResurrectorSink)

@@ -5,7 +5,7 @@ import time
 import gevent
 
 from .async import AsyncResult
-from .constants import SinkProperties
+from .constants import MessageProperties, SinkProperties
 from .message import (
   Deadline,
   MethodCallMessage,
@@ -108,9 +108,6 @@ class MessageDispatcher(ClientMessageSink):
       ).Unwrap()
 
   def _DispatchMethod(self, open_result, method, args, kwargs, timeout, start_time):
-    if open_result.exception:
-      return open_result
-
     open_time = time.time()
     open_latency = open_time - start_time
 
@@ -126,7 +123,7 @@ class MessageDispatcher(ClientMessageSink):
 
     ar = AsyncResult()
     sink_stack = ClientMessageSinkStack()
-    sink_stack.Push(self, (source, start_time, ar))
+    sink_stack.Push(self, (source, start_time, ar, disp_msg.properties))
     gevent.spawn(self.next_sink.AsyncProcessRequest, sink_stack, disp_msg, None, {})
     return ar
 
@@ -165,15 +162,18 @@ class MessageDispatcher(ClientMessageSink):
     Args:
       msg - The reply message (a MethodReturnMessage).
     """
-    source, start_time, ar = context
+    source, start_time, ar, msg_props = context
+    method, service, endpoint = source
+    endpoint = msg_props.get(MessageProperties.Endpoint, None)
+    host_source = method, service, endpoint
     end_time = time.time()
-    self.Varz.request_latency(source, end_time - start_time) # pylint: disable=no-member
+    self.Varz.request_latency(host_source, end_time - start_time) # pylint: disable=no-member
     if isinstance(msg, MethodReturnMessage):
       if msg.error:
-        self.Varz.exception_messages(source) # pylint: disable=no-member
+        self.Varz.exception_messages(host_source) # pylint: disable=no-member
         ar.set_exception(self._WrapException(msg))
       else:
-        self.Varz.success_messages(source) # pylint: disable=no-member
+        self.Varz.success_messages(host_source) # pylint: disable=no-member
         ar.set(msg.return_value)
     else:
       ar.set_exception(InternalError('Unknown response message of type %s'

@@ -27,7 +27,7 @@ class HttpTransportSink(ClientMessageSink):
   def state(self):
     return ChannelState.Open
 
-  def _DoHttpRequestAsync(self, sink_stack, deadline, method, url, **kwargs):
+  def _DoHttpRequestAsync(self, sink_stack, deadline, method, url, data=None, **kwargs):
     if url.startswith('/'):
       url = url[1:]
     method = method.lower()
@@ -39,12 +39,15 @@ class HttpTransportSink(ClientMessageSink):
     else:
       timeout = None
 
+    if not data:
+      data = kwargs
+
     url = 'http://%s:%s/%s' % (self._endpoint.host, self._endpoint.port, url)
     try:
       if method == 'get':
-        response = self._session.get(url, timeout=timeout, data=kwargs)
+        response = self._session.get(url, data, timeout=timeout)
       elif method == 'post':
-        response = self._session.post(url, timeout=timeout, data=kwargs)
+        response = self._session.post(url, data, timeout=timeout)
       else:
         raise NotImplementedError()
 

@@ -156,7 +156,6 @@ class ClientMessageSinkStack(SinkStack):
   The ClientMessageSinkStack forwards AsyncProcessResponse to the next sink
   on the stack.
   """
-  __slots__ = '_initial_greenlet',
 
   def __init__(self):
     """
@@ -164,7 +163,6 @@ class ClientMessageSinkStack(SinkStack):
       reply_sink - An optional ReplySink.
     """
     super(ClientMessageSinkStack, self).__init__()
-    self._initial_greenlet = None
 
   def AsyncProcessResponse(self, stream, msg):
     """Pop the next sink off the stack and call AsyncProcessResponse on it."""

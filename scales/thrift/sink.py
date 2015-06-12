@@ -144,7 +144,7 @@ class SocketTransportSink(ClientMessageSink):
             self._socket.write(data)
         self._varz.messages_sent()
 
-        sz, = unpack('!i', self._socket.readAll(4))
+        sz, = unpack('!i', str(self._socket.readAll(4)))
         with self._varz.recv_time.Measure():
           with self._varz.recv_latency.Measure():
             buf = StringIO(self._socket.readAll(sz))
