@@ -206,37 +206,42 @@ class VarzAggregator(object):
     return d0 + d1
 
   @staticmethod
-  def Aggregate(varz, metrics):
+  def Aggregate(varz, metrics, key_selector=None):
     """Aggregate varz
 
     Args:
       varz - The varz dictionary to aggregate, typically VarzReceiver.VARZ_DATA.
       metrics - The metric metadata dictionary, typically VarzReceiver.VARZ_METRICS
+      key_selector - A function to select the key to aggregate by given a
+                     (endpoint, service, host) tuple.  By default this returns
+                     the service.
     Returns:
       A dictionary of metric -> service -> aggregate.
     """
+    if not key_selector:
+      key_selector = lambda k: k[1]
 
     agg = defaultdict(dict)
     for metric in varz.keys():
       metric_info = metrics.get(metric, None)
       if not metric_info:
         continue
-      varz_type, source_tpe = metric_info
+      varz_type, source_type = metric_info
       metric_agg = agg[metric]
       for source in varz[metric].keys():
         gevent.sleep(0)
-        method, service, endpoint = source
+        key = key_selector(source)
         data = varz[metric][source]
-        if service not in metric_agg:
-          metric_agg[service] = VarzAggregator._Agg()
+        if key not in metric_agg:
+          metric_agg[key] = VarzAggregator._Agg()
           if isinstance(data, deque):
-            metric_agg[service].work = []
+            metric_agg[key].work = []
 
         if isinstance(data, deque):
-          metric_agg[service].work.append(data)
+          metric_agg[key].work.append(data)
         else:
-          metric_agg[service].work += data
-        metric_agg[service].count += 1
+          metric_agg[key].work += data
+        metric_agg[key].count += 1
 
       if varz_type in (VarzType.AggregateTimer, VarzType.Counter,
                        VarzType.Gauge, VarzType.Rate):

@@ -212,6 +212,11 @@ class SocketTransportSink(ClientMessageSink):
     for sink_stack, _, _ in self._tag_map.values():
       sink_stack.AsyncProcessResponseMessage(msg)
 
+    if (self._open_result
+        and not self._open_result.ready()
+        and isinstance(reason, Exception)):
+      self._open_result.set_exception(reason)
+
     self._tag_map = {}
     self._open_result = AsyncResult()
     self._send_queue = Queue()

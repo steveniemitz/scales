@@ -30,6 +30,7 @@ class ResurrectorSink(ClientMessageSink):
     endpoint = properties[SinkProperties.Endpoint]
     service = properties[SinkProperties.Service]
     endpoint_source = '%s:%d' % (endpoint.host, endpoint.port)
+    self.endpoint = endpoint_source
     self._log = ROOT_LOG.getChild('[%s.%s]' % (service, endpoint_source))
     self._properties = properties
     self._next_factory = next_factory
@@ -107,5 +108,6 @@ class ResurrectorSink(ClientMessageSink):
       return ChannelState.Idle
     else:
       return self.next_sink.state
+
 
 ResurrectorSinkProvider = SinkProvider(ResurrectorSink)

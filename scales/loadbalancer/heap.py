@@ -18,7 +18,7 @@ from .base import (
   NoMembersError
 )
 from ..async import AsyncResult
-from ..constants import (Int, ChannelState)
+from ..constants import (Int, ChannelState, MessageProperties)
 from ..sink import (
   FailingMessageSink,
 )
@@ -100,6 +100,7 @@ class HeapBalancerSink(LoadBalancerSink):
     self._heap = [self.Node(FailingMessageSink(NoMembersError), self.Zero, 0)]
     self._downq = None
     self._size = 0
+    self._open = False
     super(HeapBalancerSink, self).__init__(next_provider, properties)
 
   def AsyncProcessRequest(self, sink_stack, msg, stream, headers):
@@ -116,6 +117,10 @@ class HeapBalancerSink(LoadBalancerSink):
           put_called[0] = True
           self.__Put(n)
       sink_stack.Push(self, PutWrapper)
+
+    endpoint = getattr(n.channel, 'endpoint', None)
+    if endpoint:
+      msg.properties[MessageProperties.Endpoint] = n.channel.endpoint
     n.channel.AsyncProcessRequest(sink_stack, msg, stream, headers)
 
   def AsyncProcessResponse(self, sink_stack, context, stream, msg):
@@ -124,7 +129,7 @@ class HeapBalancerSink(LoadBalancerSink):
 
   # Events override by subclasses
   def _OnNodeDown(self, node):
-    pass
+    return AsyncResult.Complete()
 
   def _OnNodeUp(self, node):
     pass
@@ -175,7 +180,8 @@ class HeapBalancerSink(LoadBalancerSink):
         if n.channel.state  == ChannelState.Idle:
           # This node was the last chance, but still idle.
           # At this point there's nothing to do but wait for it to open.
-          n.channel.Open().wait()
+          open_ar = self._OpenNode(n)
+          open_ar.wait()
         else:
           return n
       else:
@@ -235,7 +241,10 @@ class HeapBalancerSink(LoadBalancerSink):
     # before the next message attempts to get it.  However, the Open() will likely
     # yield, so other code paths need to be aware there is a potentially un-open
     # sink on the heap.
-    sink.Open().wait()
+    if self._open:
+      return self._OpenNode(new_node)
+    else:
+      return AsyncResult.Complete()
 
   def _RemoveNode(self, sink):
     """Remove a sink from the heap.
@@ -272,15 +281,27 @@ class HeapBalancerSink(LoadBalancerSink):
     else:
       self._RemoveNode(channel)
 
+  def _OnOpenComplete(self, ar, node):
+    if ar.exception:
+      self._log.error('Exception caught opening channel: %s' % str(ar.exception))
+      return self._OnNodeDown(node)
+    else:
+      return ar
+
+  def _OpenNode(self, n):
+    return n.channel.Open().ContinueWith(lambda ar: self._OnOpenComplete(ar, n)).Unwrap()
+
   def Open(self):
     """Open the sink and all underlying nodes."""
+    self._open = True
     if self._size > 0:
       # Ignore the first sink, it's the FailingChannelSink.
-      return AsyncResult.WhenAny([n.channel.Open() for n in self._heap[1:]])
+      return AsyncResult.WhenAny([self._OpenNode(n) for n in self._heap[1:]])
     else:
       return AsyncResult.Complete()
 
   def Close(self):
+    self._open = False
     """Close the sink and all underlying nodes immediately."""
     [n.channel.Close() for n in self._heap]
 

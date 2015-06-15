@@ -17,3 +17,6 @@ class SinkProperties(object):
   Service = 'service'
   ServerSetProvider = 'server_set_provider'
   Timeout = 'timeout'
+
+class MessageProperties(object):
+  Endpoint = '__Endpoint'
