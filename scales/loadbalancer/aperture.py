@@ -25,7 +25,7 @@ from ..varz import (
 )
 
 class MonoClock(object):
-  """A clock who's value is guaranteed to always be increasing.
+  """A clock whose value is guaranteed to always be increasing.
   Clock skew is compensated.
   """
   def __init__(self):
@@ -186,7 +186,7 @@ class ApertureBalancerSink(HeapBalancerSink):
   def _OnNodeDown(self, node):
     """Invoked by the base class when a node is marked down.
     In this case, if the downed node is currently in the aperture, we want to
-    remove if, and then attempt to adjust the aperture
+    remove if, and then attempt to adjust the aperture.
     """
     if node.channel in self._active_sinks:
       return self._TryExpandAperture()

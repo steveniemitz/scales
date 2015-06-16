@@ -30,6 +30,8 @@ class MockSink(ClientMessageSink):
     self.ProcessRequest = None
     self.ProcessResponse = None
     self._open_delay = properties.get('open_delay', 0)
+    self._num_failures = properties.get('num_failures', [0])
+    self._properties = properties
     self._open_result = None
     self.endpoint = properties[SinkProperties.Endpoint]
 
@@ -55,6 +57,10 @@ class MockSink(ClientMessageSink):
   def Open(self):
     if not self._open_result:
       def open_impl():
+        if self._num_failures[0] > 0:
+          self._num_failures[0] -= 1
+          self._state = ChannelState.Closed
+          raise Exception("Error opening socket")
         gevent.sleep(self._open_delay)
         self._state = ChannelState.Open
       self._open_result = AsyncResult()

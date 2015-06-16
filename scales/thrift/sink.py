@@ -230,14 +230,16 @@ class ThriftSerializerSink(ClientMessageSink):
 ThriftFormatterSinkProvider = SinkProvider(ThriftSerializerSink)
 
 class SocketTransportSinkProvider(SinkProviderBase):
+  SINK_CLS = SocketTransportSink
+
   def CreateSink(self, properties):
     server = properties[SinkProperties.Endpoint]
     service = properties[SinkProperties.Service]
     sock = TSocket.TSocket(server.host, server.port)
     healthy_sock = VarzSocketWrapper(sock, service)
-    sink = SocketTransportSink(healthy_sock, service)
+    sink = self.SINK_CLS(healthy_sock, service)
     return sink
 
   @property
   def sink_class(self):
-    return SocketTransportSink
+    return self.SINK_CLS

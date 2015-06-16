@@ -19,7 +19,7 @@ class LoadBalancerSink(ClientMessageSink):
   def __init__(self, next_provider, properties):
     self._properties = properties
     service_name = properties[SinkProperties.Service]
-    server_set_provider = properties['server_set_provider']
+    server_set_provider = properties[SinkProperties.ServerSetProvider]
     log_name = self.__class__.__name__.replace('ChannelSink', '')
     self._log = ROOT_LOG.getChild('%s.[%s]' % (log_name, service_name))
     self._init_done = Event()

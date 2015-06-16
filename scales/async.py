@@ -84,7 +84,11 @@ class AsyncResult(g_AsyncResult):
 
   @staticmethod
   def CompleteIn(n):
-    """Returns an AsyncResult that completes in <n> seconds"""
+    """Returns an AsyncResult that completes in <n> seconds
+
+    Args:
+      n - The number of seconds to wait before completing.
+    """
     ar = AsyncResult()
     def helper():
       ar.set()

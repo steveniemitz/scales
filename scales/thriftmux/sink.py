@@ -17,9 +17,10 @@ from ..message import (
 from ..sink import (
   ClientMessageSink,
   SinkProvider,
-  SinkProviderBase,
 )
-from ..thrift.socket import TSocket
+from ..thrift.sink import (
+  SocketTransportSinkProvider as ThriftSocketTransportSinkProvider
+)
 from ..varz import (
   AggregateTimer,
   AverageRate,
@@ -27,8 +28,7 @@ from ..varz import (
   Counter,
   Gauge,
   SourceType,
-  VarzBase,
-  VarzSocketWrapper
+  VarzBase
 )
 from .serializer import (
   MessageSerializer,
@@ -222,7 +222,7 @@ class SocketTransportSink(ClientMessageSink):
     self._send_queue = Queue()
 
   def _SendPingMessage(self):
-    """Constucts and sends a Tping message."""
+    """Constructs and sends a Tping message."""
     self._log.debug('Sending ping message.')
     self._ping_ar = AsyncResult()
     self._last_ping_start = time.time()
@@ -263,7 +263,7 @@ class SocketTransportSink(ClientMessageSink):
     message times out in transit.
 
     Args:
-      dct - The properties of the message.
+      msg_properties - The properties of the message.
     """
 
     timeout_event = msg_properties.get(Deadline.EVENT_KEY, None)
@@ -479,16 +479,5 @@ class ThriftMuxMessageSerializerSink(ClientMessageSink):
 
 ThriftMuxMessageSerializerSinkProvider = SinkProvider(ThriftMuxMessageSerializerSink)
 
-class SocketTransportSinkProvider(SinkProviderBase):
-  def CreateSink(self, properties):
-    server = properties[SinkProperties.Endpoint]
-    service = properties[SinkProperties.Service]
-
-    sock = TSocket.TSocket(server.host, server.port)
-    healthy_sock = VarzSocketWrapper(sock, service)
-    socket_sink = SocketTransportSink(healthy_sock, service)
-    return socket_sink
-
-  @property
-  def sink_class(self):
-    return SocketTransportSink
+class SocketTransportSinkProvider(ThriftSocketTransportSinkProvider):
+  SINK_CLS = SocketTransportSink

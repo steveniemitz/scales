@@ -34,7 +34,7 @@ class Observable(object):
       callback - The method to be called when the value changes.
       one_shot - If true, the callback will only be invoked once.
     """
-    if callback is None:
+    if callback is None or not callable(callback):
       raise Exception("callback can not be None")
 
     if one_shot:
