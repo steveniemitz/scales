@@ -4,6 +4,7 @@ request.
 """
 
 import logging
+import random
 
 from gevent.event import Event
 
@@ -29,6 +30,7 @@ class LoadBalancerSink(ClientMessageSink):
       self._OnServerSetJoin,
       self._OnServerSetLeave)
     server_set = server_set_provider.GetServers()
+    random.shuffle(server_set)
     self._servers = {}
     [self._AddServer(m) for m in server_set]
     self._init_done.set()

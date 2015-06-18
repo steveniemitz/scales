@@ -11,7 +11,7 @@ LOG = logging.getLogger('scales.TimerQueue')
 class TimerQueue(object):
   """A timer that provides efficient scheduling of large numbers of events in
   the near future."""
-  def __init__(self, time_source=time.time, resolution=0.05):
+  def __init__(self, time_source=time.time, resolution=0.01):
     """
     Args:
       time_source - A callable to get the current time (in seconds).
