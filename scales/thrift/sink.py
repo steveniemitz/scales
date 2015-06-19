@@ -5,7 +5,7 @@ import time
 import gevent
 
 from ..async import AsyncResult
-from ..constants import (ChannelState, SinkProperties)
+from ..constants import (ChannelState, SinkProperties, SinkRole)
 from ..message import (
   ClientError,
   Deadline,
@@ -190,13 +190,32 @@ class SocketTransportSink(ClientMessageSink):
     pass
 
 
+class SocketTransportSinkProvider(SinkProviderBase):
+  SINK_CLS = SocketTransportSink
+  Role = SinkRole.Transport
+
+  def CreateSink(self, properties):
+    server = properties[SinkProperties.Endpoint]
+    service = properties[SinkProperties.Label]
+    sock = TSocket.TSocket(server.host, server.port)
+    healthy_sock = VarzSocketWrapper(sock, service)
+    sink = self.SINK_CLS(healthy_sock, service)
+    return sink
+
+  @property
+  def sink_class(self):
+    return self.SINK_CLS
+
+SocketTransportSink.Builder = SocketTransportSinkProvider
+
+
 class ThriftSerializerSink(ClientMessageSink):
   """A sink for serializing thrift method calls."""
 
-  def __init__(self, next_provider, properties):
+  def __init__(self, next_provider, sink_properties, global_properties):
     super(ThriftSerializerSink, self).__init__()
-    self._serializer = MessageSerializer(properties[SinkProperties.ServiceClass])
-    self.next_sink = next_provider.CreateSink(properties)
+    self._serializer = MessageSerializer(global_properties[SinkProperties.ServiceInterface])
+    self.next_sink = next_provider.CreateSink(global_properties)
 
   def AsyncProcessRequest(self, sink_stack, msg, stream, headers):
     buf = StringIO()
@@ -226,20 +245,4 @@ class ThriftSerializerSink(ClientMessageSink):
         msg = MethodReturnMessage(error=ex)
       sink_stack.AsyncProcessResponseMessage(msg)
 
-
-ThriftFormatterSinkProvider = SinkProvider(ThriftSerializerSink)
-
-class SocketTransportSinkProvider(SinkProviderBase):
-  SINK_CLS = SocketTransportSink
-
-  def CreateSink(self, properties):
-    server = properties[SinkProperties.Endpoint]
-    service = properties[SinkProperties.Service]
-    sock = TSocket.TSocket(server.host, server.port)
-    healthy_sock = VarzSocketWrapper(sock, service)
-    sink = self.SINK_CLS(healthy_sock, service)
-    return sink
-
-  @property
-  def sink_class(self):
-    return self.SINK_CLS
+ThriftSerializerSink.Builder = SinkProvider(ThriftSerializerSink, SinkRole.Formatter)

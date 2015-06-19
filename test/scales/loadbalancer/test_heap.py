@@ -80,7 +80,7 @@ class HeapBalancerTestCase(LoadBalancerTestCase):
   def testHeapConcurrentOpenAndRequest(self):
     self.mock_ss_provider.RemoveAllServers()
     #self.mock_ss_provider.RemoveServer('localhost', 8080)
-    self.sink_properties['open_delay'] = .1
+    self.global_properties['open_delay'] = .1
 
     def race():
       gevent.sleep(.01)

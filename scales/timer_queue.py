@@ -1,8 +1,9 @@
 import heapq
 import logging
+import math
 import time
-import gevent
 
+import gevent
 
 from gevent.event import Event
 
@@ -92,7 +93,8 @@ class TimerQueue(object):
       raise Exception("action must be non-null")
 
     if self._resolution:
-      deadline = round(deadline / self._resolution) * self._resolution
+      deadline = int(
+        math.ceil(float(deadline) / self._resolution)) * self._resolution
 
     self._seq += 1
     timeout_args = [deadline, self._seq, False, action]

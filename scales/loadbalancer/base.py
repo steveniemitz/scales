@@ -8,7 +8,7 @@ import random
 
 from gevent.event import Event
 
-from ..constants import SinkProperties
+from ..constants import (SinkProperties, SinkRole)
 from ..sink import ClientMessageSink
 
 ROOT_LOG = logging.getLogger("scales.loadbalancer")
@@ -17,10 +17,12 @@ class NoMembersError(Exception): pass
 
 class LoadBalancerSink(ClientMessageSink):
   """Base class for all load balancer sinks."""
-  def __init__(self, next_provider, properties):
-    self._properties = properties
-    service_name = properties[SinkProperties.Service]
-    server_set_provider = properties[SinkProperties.ServerSetProvider]
+  Role = SinkRole.LoadBalancer
+
+  def __init__(self, next_provider, sink_properties, global_properties):
+    self._properties = global_properties
+    service_name = global_properties[SinkProperties.Label]
+    server_set_provider = sink_properties.server_set_provider
     log_name = self.__class__.__name__.replace('ChannelSink', '')
     self._log = ROOT_LOG.getChild('%s.[%s]' % (log_name, service_name))
     self._init_done = Event()

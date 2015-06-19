@@ -31,7 +31,7 @@ class ApertureBalancerTestCase(LoadBalancerTestCase):
 
   def testApertureHandlesInitialNodeDown(self):
     self.mock_provider = MockSinkProvider()
-    self.sink_properties['num_failures'] = [1]
+    self.global_properties['num_failures'] = [1]
     self.sink = self._createSink()
     ar = self.sink.Open()
     ar.wait()

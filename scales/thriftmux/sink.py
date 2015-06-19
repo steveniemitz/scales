@@ -409,6 +409,11 @@ class SocketTransportSink(ClientMessageSink):
     pass
 
 
+class SocketTransportSinkProvider(ThriftSocketTransportSinkProvider):
+  SINK_CLS = SocketTransportSink
+
+SocketTransportSink.Builder = SocketTransportSinkProvider
+
 class ThriftMuxMessageSerializerSink(ClientMessageSink):
   """A serializer sink that serializes thrift messages to the finagle mux
   wire format"""
@@ -422,11 +427,11 @@ class ThriftMuxMessageSerializerSink(ClientMessageSink):
       'message_bytes_recv': AverageRate
     }
 
-  def __init__(self, next_provider, properties):
+  def __init__(self, next_provider, sink_properties, global_properties):
     super(ThriftMuxMessageSerializerSink, self).__init__()
-    self.next_sink = next_provider.CreateSink(properties)
-    self._serializer = MessageSerializer(properties[SinkProperties.ServiceClass])
-    self._varz = self.Varz(properties[SinkProperties.Service])
+    self.next_sink = next_provider.CreateSink(global_properties)
+    self._serializer = MessageSerializer(global_properties[SinkProperties.ServiceInterface])
+    self._varz = self.Varz(global_properties[SinkProperties.Label])
 
   @staticmethod
   def ReadHeader(stream):
@@ -477,7 +482,4 @@ class ThriftMuxMessageSerializerSink(ClientMessageSink):
         msg = MethodReturnMessage(error=ex)
       sink_stack.AsyncProcessResponseMessage(msg)
 
-ThriftMuxMessageSerializerSinkProvider = SinkProvider(ThriftMuxMessageSerializerSink)
-
-class SocketTransportSinkProvider(ThriftSocketTransportSinkProvider):
-  SINK_CLS = SocketTransportSink
+ThriftMuxMessageSerializerSink.Builder = SinkProvider(ThriftMuxMessageSerializerSink)

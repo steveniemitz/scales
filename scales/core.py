@@ -4,9 +4,9 @@ import collections
 import functools
 import inspect
 
-from .constants import SinkProperties
+from .constants import (SinkProperties, SinkRole)
 from .dispatch import MessageDispatcher
-from .pool import (
+from .loadbalancer.serverset import (
   StaticServerSetProvider,
   ZooKeeperServerSetProvider,
 )
@@ -125,16 +125,15 @@ class Scales(object):
     """Builder for creating Scales clients."""
 
     def __init__(self, Iface):
-      self._built = False
       self._service = Iface
       self._name = Iface.__module__
       self._uri_parser = ScalesUriParser()
       self._uri = None
       self._timeout = 10
       self._server_set_provider = None
-      self._sink_provider = None
-      self._load_balancer = None
       self._client_provider = ClientProxyBuilder()
+      self._properties = {}
+      self._stack = []
 
     @property
     def name(self):
@@ -163,15 +162,6 @@ class Scales(object):
       self._uri_parser = parser
       return self
 
-    def SetPoolMemberSelector(self, selector):
-      """Sets the pool member selector.
-
-      Args:
-        selector - An instance of a PoolMemberSelector or derived class.
-      """
-      self._selector = selector
-      return self
-
     def SetTimeout(self, timeout):
       """Sets the default call timeout.
 
@@ -179,35 +169,6 @@ class Scales(object):
         timeout - A timeout in seconds.
       """
       self._timeout = timeout
-      return self
-
-    def SetInitialSizeMembers(self, size):
-      """Sets the initial size of the pool, in members.
-
-      Args:
-        size - The size of the pool.
-      """
-      self._initial_size_members = size
-      return self
-
-    def SetInitialSizePct(self, size):
-      """Sets the initial size of the pool, as a ratio of the total number of
-      members at initialization time.
-
-      Args:
-        size - A float between (0,1].
-      """
-      self._initial_size_pct = size
-      return self
-
-    def SetSinkProvider(self, message_sink_builder):
-      """Sets the message sink builder.  Message sink builders are used to
-      process messages.  See sink.py for a full description of message sinks.
-
-      Args:
-        message_sink_builder - An instance of a MessageSinkStackBuilder or derived class.
-      """
-      self._sink_provider = message_sink_builder
       return self
 
     def SetClientProvider(self, client_provider):
@@ -240,30 +201,59 @@ class Scales(object):
       self._name = name
       return self
 
+    def WithSink(self, sink_params):
+      self._stack.append(sink_params)
+      return self
+
+    def _Replace(self, sink_params, predicate):
+      replace_idx = next((i for i, n in enumerate(self._stack)
+                          if predicate(n)), -1)
+      if replace_idx == -1:
+        raise Exception("Unable to find sink of to replace.")
+      else:
+        self._stack[replace_idx] = sink_params
+      return self
+
+    def ReplaceSink(self, cls_to_replace, sink_params):
+      return self._Replace(sink_params, lambda n: isinstance(n, cls_to_replace))
+
+    def ReplaceRole(self, role, sink_params):
+      return self._Replace(sink_params, lambda n: n.Role == role)
+
     def Build(self):
       """Build a client given the current builder configuration.
 
       Returns:
         A proxy object with all methods of Iface.
       """
-      sink_provider = self._sink_provider.CreateProvider()
+      for n, p in enumerate(self._stack[:-1]):
+        p.next_provider = self._stack[n+1]
+
+      # Add the server set provider to the properties of the load balancer in the
+      # stack (if one exists)
+      for n, p in enumerate(self._stack):
+        if p.Role == SinkRole.LoadBalancer and p.sink_properties is not None:
+          new_params_dct = p.sink_properties.__dict__.copy()
+          new_params_dct['server_set_provider'] = self._server_set_provider
+          p.sink_properties = p.PARAMS_CLASS(**new_params_dct)
+          break
 
       timeout_sink = TimeoutSinkProvider()
-      timeout_sink.next_provider = sink_provider
+      timeout_sink.next_provider = self._stack[0]
 
       properties = {
-        SinkProperties.Service: self.name,
-        SinkProperties.ServiceClass: self._service,
-        SinkProperties.ServerSetProvider: self.server_set_provider,
-        SinkProperties.Timeout: self._timeout
+        SinkProperties.Label: self.name,
+        SinkProperties.ServiceInterface: self._service,
       }
+      properties.update(self._properties)
+
       Scales.SERVICE_REGISTRY[self.name] = (timeout_sink, properties)
       dispatcher = MessageDispatcher(
           self._service,
           timeout_sink,
+          self._timeout,
           properties)
 
-      self._built = True
       proxy_cls = self._client_provider.CreateServiceClient(self._service)
       proxy_obj = proxy_cls(dispatcher)
       proxy_obj.DispatcherOpen()

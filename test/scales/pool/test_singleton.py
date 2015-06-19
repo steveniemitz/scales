@@ -8,7 +8,7 @@ class SingletonPoolTestCast(SinkTestCase):
   SINK_CLS = SingletonPoolSink
 
   def customize(self):
-    self.sink_properties[SinkProperties.Endpoint] = 'localhost'
+    self.global_properties[SinkProperties.Endpoint] = 'localhost'
 
   def testSingletonPoolFowardsMessage(self):
     self._submitTestMessage()

@@ -1,3 +1,3 @@
-from .aperture import ApertureBalancerSink, ApertureBalancerSinkProvider
+from .aperture import ApertureBalancerSink
 from .heap import HeapBalancerSink
 

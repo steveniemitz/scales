@@ -1,19 +1,24 @@
 from .sink import (
-    ThriftMuxMessageSerializerSinkProvider,
-    SocketTransportSinkProvider,
+    ThriftMuxMessageSerializerSink,
+    SocketTransportSink,
 )
+from ..core import Scales
+from ..loadbalancer import ApertureBalancerSink
+from ..resurrector import ResurrectorSink
 
-from ..builder import BaseBuilder
-from ..loadbalancer import ApertureBalancerSinkProvider
-from ..resurrector import ResurrectorSinkProvider
 
+class ThriftMux(object):
+  @staticmethod
+  def NewBuilder(Iface):
+    return Scales.NewBuilder(Iface) \
+      .WithSink(ThriftMuxMessageSerializerSink.Builder()) \
+      .WithSink(ApertureBalancerSink.Builder()) \
+      .WithSink(ResurrectorSink.Builder()) \
+      .WithSink(SocketTransportSink.Builder())
 
-class ThriftMux(BaseBuilder):
-  """A builder class for building clients to ThriftMux services."""
-  class SinkProviderProvider(BaseBuilder.SinkProviderProvider):
-    _PROVIDERS = [
-      ThriftMuxMessageSerializerSinkProvider,
-      ApertureBalancerSinkProvider,
-      ResurrectorSinkProvider,
-      SocketTransportSinkProvider
-    ]
+  @staticmethod
+  def NewClient(Iface, uri, timeout=10):
+    return ThriftMux.NewBuilder(Iface) \
+      .SetUri(uri) \
+      .SetTimeout(timeout) \
+      .Build()

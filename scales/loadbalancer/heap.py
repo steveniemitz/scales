@@ -96,12 +96,12 @@ class HeapBalancerSink(LoadBalancerSink):
       else:
         return self.index < other.index
 
-  def __init__(self, next_provider, properties):
+  def __init__(self, next_provider, sink_properties, global_properties):
     self._heap = [self.Node(FailingMessageSink(NoMembersError), self.Zero, 0)]
     self._downq = None
     self._size = 0
     self._open = False
-    super(HeapBalancerSink, self).__init__(next_provider, properties)
+    super(HeapBalancerSink, self).__init__(next_provider, sink_properties, global_properties)
 
   def AsyncProcessRequest(self, sink_stack, msg, stream, headers):
     if self._size == 0:
@@ -180,10 +180,10 @@ class HeapBalancerSink(LoadBalancerSink):
         if n.channel.state  == ChannelState.Idle:
           # This node was the last chance, but still idle.
           # At this point there's nothing to do but wait for it to open.
+          # However, if we already waited for it to open
           open_ar = self._OpenNode(n)
           open_ar.wait()
-        else:
-          return n
+        return n
       else:
         if n.channel.state == ChannelState.Closed:
           self._log.warning('Marking node %s down' % n)
@@ -301,8 +301,8 @@ class HeapBalancerSink(LoadBalancerSink):
       return AsyncResult.Complete()
 
   def Close(self):
-    self._open = False
     """Close the sink and all underlying nodes immediately."""
+    self._open = False
     [n.channel.Close() for n in self._heap]
 
   @property

@@ -1,7 +1,9 @@
 import unittest
 
 from scales.core import ScalesUriParser, ClientProxyBuilder
-from scales.pool import StaticServerSetProvider, ZooKeeperServerSetProvider
+from scales.loadbalancer.serverset import (
+  StaticServerSetProvider,
+  ZooKeeperServerSetProvider)
 
 Server = ScalesUriParser.Server
 Endpoint = ScalesUriParser.Endpoint

@@ -1,8 +1,2 @@
-from .base import (
-  ServerSetProvider,
-  StaticServerSetProvider,
-  ZooKeeperServerSetProvider,
-)
-
-from .singleton import SingletonPoolChannelSinkProvider
-from .watermark import WatermarkPoolChannelSinkProvider
+from .singleton import SingletonPoolSink
+from .watermark import WatermarkPoolSink

@@ -11,12 +11,11 @@ node in the balancer is handling.
 """
 
 import math
-import random
 import time
 
 from .heap import HeapBalancerSink
 from ..async import AsyncResult
-from ..constants import (ChannelState, SinkProperties)
+from ..constants import (ChannelState, SinkProperties, SinkRole)
 from ..sink import SinkProvider
 from ..varz import (
   Gauge,
@@ -86,18 +85,18 @@ class ApertureBalancerSink(HeapBalancerSink):
       'load_average': Gauge
     }
 
-  def __init__(self, next_provider, properties):
+  def __init__(self, next_provider, sink_properties, global_properties):
     self._idle_sinks = set()
     self._active_sinks = set()
     self._total = 0
     self._ema = Ema(5)
     self._time = MonoClock()
-    self._min_size = 1
-    self._min_load = 0.5
-    self._max_load = 2
-    service_name = properties[SinkProperties.Service]
+    self._min_size = sink_properties.min_size
+    self._min_load = sink_properties.min_load
+    self._max_load = sink_properties.max_load
+    service_name = global_properties[SinkProperties.Label]
     self.__varz = self.ApertureVarz(service_name)
-    super(ApertureBalancerSink, self).__init__(next_provider, properties)
+    super(ApertureBalancerSink, self).__init__(next_provider, sink_properties, global_properties)
 
   def _UpdateSizeVarz(self):
     """Update active and idle varz"""
@@ -227,4 +226,11 @@ class ApertureBalancerSink(HeapBalancerSink):
     elif aperture_load <= self._min_load and aperture_size > self._min_size:
       self._ContractAperture()
 
-ApertureBalancerSinkProvider = SinkProvider(ApertureBalancerSink)
+ApertureBalancerSink.Builder = SinkProvider(
+  ApertureBalancerSink,
+  SinkRole.LoadBalancer,
+  smoothing_window = 5,
+  min_size = 1,
+  min_load = 0.5,
+  max_load = 2.0,
+  server_set_provider = None)

@@ -5,14 +5,14 @@
  calls the next sink until the chain terminates.  On the response side, sinks
  cooperatively propagate the response to the next via a sink stack.
 """
-import time
 
 from abc import (
   ABCMeta,
   abstractmethod,
   abstractproperty
 )
-from collections import deque
+from collections import (deque, namedtuple)
+import time
 
 from .async import AsyncResult
 from .constants import (ChannelState, SinkProperties)
@@ -27,6 +27,7 @@ from .varz import (
   Counter,
   VarzBase
 )
+
 
 class MessageSink(object):
   """A base class for all message sinks.
@@ -56,6 +57,8 @@ class ClientMessageSink(MessageSink):
   processing on them.
   """
   __slots__ = '_on_faulted',
+  Role = None
+  Builder = None
 
   def __init__(self):
     self._on_faulted = Observable()
@@ -203,10 +206,10 @@ class ClientTimeoutSink(ClientMessageSink):
       'timeouts': Counter
     }
 
-  def __init__(self, next_provider, properties):
+  def __init__(self, next_provider, sink_properties, global_properties):
     super(ClientTimeoutSink, self).__init__()
-    self.next_sink = next_provider.CreateSink(properties)
-    self._varz = self.Varz(properties[SinkProperties.Service])
+    self.next_sink = next_provider.CreateSink(global_properties)
+    self._varz = self.Varz(global_properties[SinkProperties.Label])
 
   def _TimeoutHelper(self, evt, sink_stack):
     """Waits for ar to be signaled or [timeout] seconds to elapse.  If the
@@ -236,7 +239,8 @@ class ClientTimeoutSink(ClientMessageSink):
 
       evt = Observable()
       msg.properties[Deadline.EVENT_KEY] = evt
-      cancel_timeout = GLOBAL_TIMER_QUEUE.Schedule(deadline, lambda: self._TimeoutHelper(evt, sink_stack))
+      cancel_timeout = GLOBAL_TIMER_QUEUE.Schedule(
+        deadline, lambda: self._TimeoutHelper(evt, sink_stack))
       sink_stack.Push(self, cancel_timeout)
     return self.next_sink.AsyncProcessRequest(sink_stack, msg, stream, headers)
 
@@ -248,9 +252,21 @@ class ClientTimeoutSink(ClientMessageSink):
 class SinkProviderBase(object):
   """Base class for sink providers."""
   __metaclass__ = ABCMeta
-  __slots__ = 'next_provider',
+  __slots__ = 'next_provider', 'sink_properties'
+  _defaults = {}
+  SINK_CLASS = None
+  PARAMS_CLASS = None
+  Role = None
 
-  def __init__(self):
+  def __init__(self, **kwargs):
+    new_props = self._defaults.copy()
+    new_props.update(kwargs)
+    if self.PARAMS_CLASS:
+      if not callable(self.PARAMS_CLASS):
+        raise Exception('PARAMS_CLASS must be callable')
+      self.sink_properties = self.PARAMS_CLASS(**new_props) # pylint: disable=E1102
+    else:
+      self.sink_properties = None
     self.next_provider = None
 
   @abstractmethod
@@ -262,7 +278,7 @@ class SinkProviderBase(object):
     pass
 
 
-def SinkProvider(sink_cls):
+def SinkProvider(sink_cls, role=None, **defaults):
   """Factory for creating simple sink providers.
 
   Args:
@@ -270,16 +286,27 @@ def SinkProvider(sink_cls):
   Returns:
     A SinkProvider that provides sinks of type 'sink_cls'.
   """
+  field_names = ' '.join(defaults.keys())
+  params_cls = namedtuple('Params', field_names)
 
-  class _SinkProvider(SinkProviderBase):
-    SINK_CLASS = sink_cls
+  def CreateSink(self, properties):
+    return self.SINK_CLASS(self.next_provider, self.sink_properties, properties)
 
-    def CreateSink(self, properties):
-      return self.SINK_CLASS(self.next_provider, properties)
+  def sink_class(self):
+    return self.SINK_CLASS
 
-    @property
-    def sink_class(self):
-      return self.SINK_CLASS
-  return _SinkProvider
+  provider = type(
+    sink_cls.__name__ + 'Provider',
+    (SinkProviderBase, ),
+    {
+      'SINK_CLASS': sink_cls,
+      'PARAMS_CLASS': params_cls,
+      'Role': role,
+      'CreateSink': CreateSink,
+      'sink_class': property(sink_class),
+      '_defaults': defaults
+    }
+  )
+  return provider
 
 TimeoutSinkProvider = SinkProvider(ClientTimeoutSink)

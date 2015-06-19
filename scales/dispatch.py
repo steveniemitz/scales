@@ -54,6 +54,7 @@ class MessageDispatcher(ClientMessageSink):
         self,
         service,
         sink_provider,
+        default_timeout,
         properties):
     """
     Args:
@@ -63,9 +64,9 @@ class MessageDispatcher(ClientMessageSink):
     """
     super(MessageDispatcher, self).__init__()
     self.next_sink = sink_provider.CreateSink(properties)
-    self._dispatch_timeout = properties[SinkProperties.Timeout]
+    self._dispatch_timeout = default_timeout
     self._service = service
-    self._name = properties[SinkProperties.Service]
+    self._name = properties[SinkProperties.Label]
     self._open_ar = AsyncResult()
 
   def Open(self):

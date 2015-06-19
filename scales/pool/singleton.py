@@ -1,6 +1,6 @@
 from .base import PoolSink
 from ..async import AsyncResult
-from ..constants import ChannelState
+from ..constants import (ChannelState, SinkRole)
 from ..sink import SinkProvider
 
 
@@ -12,8 +12,8 @@ class SingletonPoolSink(PoolSink):
   requests, such as multiplexing transports.
   """
 
-  def __init__(self, sink_provider, properties):
-    super(SingletonPoolSink, self).__init__(sink_provider, properties)
+  def __init__(self, sink_provider, sink_properties, global_properties):
+    super(SingletonPoolSink, self).__init__(sink_provider, global_properties)
     self._ref_count = 0
 
   def Open(self):
@@ -67,4 +67,4 @@ class SingletonPoolSink(PoolSink):
     pass
 
 
-SingletonPoolChannelSinkProvider = SinkProvider(SingletonPoolSink)
+SingletonPoolSink.Builder = SinkProvider(SingletonPoolSink, SinkRole.Pool)

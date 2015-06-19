@@ -13,10 +13,14 @@ class Int(object):
 
 class SinkProperties(object):
   Endpoint = 'endpoint'
-  ServiceClass = 'service_cls'
-  Service = 'service'
-  ServerSetProvider = 'server_set_provider'
-  Timeout = 'timeout'
+  ServiceInterface = 'service_iface'
+  Label = 'label'
 
 class MessageProperties(object):
   Endpoint = '__Endpoint'
+
+class SinkRole(object):
+  Transport = 'transport'
+  Pool = 'pool'
+  LoadBalancer = 'loadbalancer'
+  Formatter = 'formatter'

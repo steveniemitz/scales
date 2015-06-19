@@ -1,21 +1,29 @@
-from ..resurrector import ResurrectorSinkProvider
-from ..loadbalancer import ApertureBalancerSinkProvider
-from ..pool import WatermarkPoolChannelSinkProvider
+from ..resurrector import ResurrectorSink
+from ..loadbalancer import ApertureBalancerSink
+from ..pool import WatermarkPoolSink
 from .sink import (
-  SocketTransportSinkProvider,
-  ThriftFormatterSinkProvider,
+  SocketTransportSink,
+  ThriftSerializerSink,
 )
 
-from ..builder import BaseBuilder
+from ..core import Scales
 
 
-class Thrift(BaseBuilder):
+class Thrift(object):
   """A builder for Thrift clients."""
-  class SinkProviderProvider(BaseBuilder.SinkProviderProvider):
-    _PROVIDERS = [
-      ThriftFormatterSinkProvider,
-      ApertureBalancerSinkProvider,
-      ResurrectorSinkProvider,
-      WatermarkPoolChannelSinkProvider,
-      SocketTransportSinkProvider
-    ]
+
+  @staticmethod
+  def NewBuilder(Iface):
+    return Scales.NewBuilder(Iface)\
+      .WithSink(ThriftSerializerSink.Builder())\
+      .WithSink(ApertureBalancerSink.Builder())\
+      .WithSink(ResurrectorSink.Builder())\
+      .WithSink(WatermarkPoolSink.Builder())\
+      .WithSink(SocketTransportSink.Builder())
+
+  @staticmethod
+  def NewClient(Iface, uri, timeout=60):
+    return Thrift.NewBuilder(Iface)\
+      .SetUri(uri)\
+      .SetTimeout(timeout)\
+      .Build()

@@ -26,16 +26,19 @@ class ResurrectorSink(ClientMessageSink):
       'reconnect_attempts': Counter,
     }
 
-  def __init__(self, next_factory, properties):
-    endpoint = properties[SinkProperties.Endpoint]
-    service = properties[SinkProperties.Service]
+  def __init__(self, next_factory, sink_properties, global_properties):
+    endpoint = global_properties[SinkProperties.Endpoint]
+    service = global_properties[SinkProperties.Label]
     endpoint_source = '%s:%d' % (endpoint.host, endpoint.port)
     self.endpoint = endpoint_source
     self._log = ROOT_LOG.getChild('[%s.%s]' % (service, endpoint_source))
-    self._properties = properties
+    self._properties = global_properties
     self._next_factory = next_factory
     self._resurrector = None
     self._down_on = None
+    self._initial_wait_interval = sink_properties.initial_wait_interval
+    self._max_wait_interval = sink_properties.max_wait_interval
+    self._backoff_exponent = sink_properties.backoff_exponent
     self._varz = self.Varz((service, endpoint_source))
     super(ResurrectorSink, self).__init__()
 
@@ -62,7 +65,7 @@ class ResurrectorSink(ClientMessageSink):
 
   def _TryResurrect(self):
     last_attempt = self._down_on
-    wait_interval = 5
+    wait_interval = self._initial_wait_interval
     self._log.info('Attempting to reopen faulted channel')
     while True:
       gevent.sleep(wait_interval)
@@ -82,9 +85,8 @@ class ResurrectorSink(ClientMessageSink):
       except:
         sink.Close()
 
-      wait_interval **= 1.2
-      if wait_interval > 60:
-        wait_interval = 60
+      wait_interval **= self._backoff_exponent
+      wait_interval = max(wait_interval, self._max_wait_interval)
 
   def Open(self):
     if not self.next_sink:
@@ -110,4 +112,7 @@ class ResurrectorSink(ClientMessageSink):
       return self.next_sink.state
 
 
-ResurrectorSinkProvider = SinkProvider(ResurrectorSink)
+ResurrectorSink.Builder = SinkProvider(ResurrectorSink,
+  initial_wait_interval=5,
+  max_wait_interval=60,
+  backoff_exponent=1.2)

@@ -28,22 +28,20 @@ class SinkTestCase(unittest.TestCase):
   def _completeTestMessage(self):
     self.sink_stack.AsyncProcessResponse(self.STREAM_SENTINEL, self.MSG_SENTINEL)
 
-  def customize(self):
+  def customize(self, **kwargs):
     pass
 
   def _createSink(self):
-    return self.SINK_CLS(self.mock_provider, self.sink_properties)
+    return self.SINK_CLS(self.mock_provider, self.sink_properties, self.global_properties)
 
-  def setUp(self, properties=None):
+  def setUp(self, **kwargs):
     self.return_message = None
     self.return_stream = None
-    self.sink_properties = {
-      SinkProperties.Service: 'mock'
+    self.sink_properties = None
+    self.global_properties = {
+      SinkProperties.Label: 'mock'
     }
-    if properties:
-      self.sink_properties.update(properties)
-
-    self.customize()
+    self.customize(**kwargs)
     self.mock_provider = MockSinkProvider()
     self.sink = self._createSink()
     self.sink.Open().wait()

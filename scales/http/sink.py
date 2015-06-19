@@ -7,12 +7,12 @@ from requests import exceptions
 from ..async import AsyncResult
 from ..constants import ChannelState, SinkProperties
 from ..sink import (ClientMessageSink, SinkProvider)
-from ..message import (MethodReturnMessage, TimeoutError)
+from ..message import (Deadline, MethodReturnMessage, TimeoutError)
 
 class HttpTransportSink(ClientMessageSink):
-  def __init__(self, next_provider, properties):
+  def __init__(self, next_provider, sink_properties, global_properties):
     super(HttpTransportSink, self).__init__()
-    self._endpoint = properties[SinkProperties.Endpoint]
+    self._endpoint = global_properties[SinkProperties.Endpoint]
     self._open_result = AsyncResult.Complete()
     self._session = requests.Session()
 
@@ -45,7 +45,7 @@ class HttpTransportSink(ClientMessageSink):
     url = 'http://%s:%s/%s' % (self._endpoint.host, self._endpoint.port, url)
     try:
       if method == 'get':
-        response = self._session.get(url, data, timeout=timeout)
+        response = self._session.get(url, params=data, timeout=timeout)
       elif method == 'post':
         response = self._session.post(url, data, timeout=timeout)
       else:
@@ -67,7 +67,7 @@ class HttpTransportSink(ClientMessageSink):
     sink_stack.AsyncProcessResponseMessage(msg)
 
   def AsyncProcessRequest(self, sink_stack, msg, stream, headers):
-    deadline = msg.properties.get(SinkProperties.Timeout)
+    deadline = msg.properties.get(Deadline.KEY)
     gevent.spawn(
         self._DoHttpRequestAsync,
         sink_stack,
@@ -79,4 +79,4 @@ class HttpTransportSink(ClientMessageSink):
   def AsyncProcessResponse(self, sink_stack, context, stream, msg):
     pass
 
-HttpTransportSinkProvider = SinkProvider(HttpTransportSink)
+HttpTransportSink.Builder = SinkProvider(HttpTransportSink)

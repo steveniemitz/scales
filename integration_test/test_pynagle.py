@@ -15,9 +15,10 @@ from gevent import monkey
 from gevent.event import Event
 
 from scales.core import Scales
+from scales.constants import SinkRole
 from scales.thriftmux import ThriftMux
 from scales.http import Http
-from scales.pool.singleton import SingletonPoolSink
+from scales.pool import WatermarkPoolSink
 from scales.thrift import Thrift
 from scales.varz import (SourceType, VarzReceiver, VarzAggregator)
 
@@ -51,6 +52,7 @@ last_dct = defaultdict(int)
 
 GreenletProfiler.start(builtins=True)
 
+
 def dump_greenlets():
   stats = GreenletProfiler.get_func_stats()
   stats.sort('tsub')
@@ -73,11 +75,6 @@ def dump_greenlets():
   print("------------ %d objects -----------" % len(gc.get_objects()))
   for k,v in sorted(dct.items(), key=lambda i: -i[1]):
     print('%40s -> %d [%d]' % (k.__name__, v, v - last_dct[k]))
-
-  last_dct = dct
-  for ob in gc.get_objects():
-    if isinstance(ob, SingletonPoolSink):
-      print('Found sink %d' % id(ob))
 
   for ob in gc.get_objects():
     if not isinstance(ob, greenlet):
@@ -215,9 +212,12 @@ if __name__ == '__main__':
     #client.DispatcherClose()
 
 
-    client = ThriftMux.NewClient(ExampleService.Iface, 'tcp://localhost:8080,localhost:8082')
+    client_builder = Thrift.NewBuilder(ExampleService.Iface).SetUri('tcp://localhost:8080')
+    client_builder.ReplaceRole(SinkRole.Pool, WatermarkPoolSink.Builder(min_watermark = 2))
+    client = client_builder.Build()
     ret = client.passMessage(ttypes.Message('hi!'))
     print(ret)
+    return
     #
     # p = Scales.SERVICE_REGISTRY[ExampleService.Iface][0]
     # while p:

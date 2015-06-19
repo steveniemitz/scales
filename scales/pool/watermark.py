@@ -5,7 +5,7 @@ import gevent
 
 from .base import PoolSink
 from ..async import AsyncResult
-from ..constants import (Int, ChannelState, SinkProperties)
+from ..constants import (Int, ChannelState, SinkProperties, SinkRole)
 from ..sink import (
   ClientMessageSink,
   SinkProvider,
@@ -58,28 +58,24 @@ class WatermarkPoolSink(PoolSink):
     _VARZ_SOURCE_TYPE = SourceType.ServiceAndEndpoint
     _VARZ = {
       'size': Gauge,
-      'queue_size': Gauge,
-      'min_size': Gauge,
-      'max_size': Gauge
+      'queue_size': Gauge
     }
 
-  def __init__(self, sink_provider, properties):
-    endpoint = properties[SinkProperties.Endpoint]
-    name = properties[SinkProperties.Service]
+  def __init__(self, next_provider, sink_properties, global_properties):
+    endpoint = global_properties[SinkProperties.Endpoint]
+    name = global_properties[SinkProperties.Label]
 
     self._cache = deque()
     self._waiters = deque()
-    self._min_size = int(properties.get('min_watermark', 1))
-    self._max_size = int(properties.get('max_watermark', Int.MaxValue))
-    self._max_queue_size = int(properties.get('max_watermark_queue', Int.MaxValue))
+    self._min_size = sink_properties.min_watermark
+    self._max_size = sink_properties.max_watermark
+    self._max_queue_size = sink_properties.max_queue_len
     self._current_size = 0
     self._state = ChannelState.Idle
     socket_name = '%s:%s' % (endpoint.host, endpoint.port)
     self._varz = self.Varz((name, socket_name))
     self._log = self.ROOT_LOG.getChild('[%s.%s]' % (name, socket_name))
-    self._varz.min_size(self._min_size)
-    self._varz.max_size(self._max_size)
-    super(WatermarkPoolSink, self).__init__(sink_provider, properties)
+    super(WatermarkPoolSink, self).__init__(next_provider, global_properties)
 
   def __PropagateShutdown(self, value):
     self.on_faulted.Set(value)
@@ -197,4 +193,10 @@ class WatermarkPoolSink(PoolSink):
     return self._state
 
 
-WatermarkPoolChannelSinkProvider = SinkProvider(WatermarkPoolSink)
+WatermarkPoolSink.Builder = SinkProvider(
+  WatermarkPoolSink,
+  SinkRole.Pool,
+  min_watermark = 1,
+  max_watermark = Int.MaxValue,
+  max_queue_len = Int.MaxValue
+)

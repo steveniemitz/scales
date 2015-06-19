@@ -10,8 +10,9 @@ from test.scales.util.base import SinkTestCase
 class WatermarkPoolTestCast(SinkTestCase):
   SINK_CLS = WatermarkPoolSink
 
-  def customize(self):
-    self.sink_properties[SinkProperties.Endpoint] = Endpoint('localhost', 8080)
+  def customize(self, max_watermark=2):
+    self.sink_properties = WatermarkPoolSink.Builder(max_watermark=max_watermark).sink_properties
+    self.global_properties[SinkProperties.Endpoint] = Endpoint('localhost', 8080)
 
   def testWatermarkPoolForwardsMessage(self):
     self._submitTestMessage()
@@ -42,14 +43,14 @@ class WatermarkPoolTestCast(SinkTestCase):
     self.assertEqual(len(self.mock_provider.sinks_created), 2)
 
   def testWatermarkPoolQueuesPastHighWatermark(self):
-    self.setUp({'max_watermark': 1})
+    self.setUp(max_watermark=1)
     self._submitTestMessage()
     self._submitTestMessage()
     self.assertEqual(len(self.mock_provider.sinks_created), 1)
     self.assertEqual(len(self.sink._waiters), 1)
 
   def _testQueueHelper(self, pre_process_response, asserts):
-    self.setUp({'max_watermark': 1})
+    self.setUp(max_watermark=1)
 
     msg_1 = object()
     msg_2 = object()

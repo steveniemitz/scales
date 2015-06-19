@@ -4,7 +4,7 @@ from scales.async import AsyncResult
 from scales.constants import ChannelState, SinkProperties
 from scales.core import ScalesUriParser
 from scales.message import (MethodReturnMessage, FailedFastError)
-from scales.pool import ServerSetProvider
+from scales.loadbalancer.serverset import ServerSetProvider
 from scales.sink import (ClientMessageSink, ClientMessageSinkStack, SinkProviderBase)
 from scales.varz import VarzSocketWrapper
 from scales.thrift.socket import TSocket
@@ -119,7 +119,7 @@ class MockServerSetProvider(ServerSetProvider):
       self._on_leave(server)
 
   def GetServers(self):
-    return self._servers
+    return [s for s in self._servers]
 
   def RemoveAllServers(self):
     while self._servers:

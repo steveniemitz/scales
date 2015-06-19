@@ -1,10 +1,10 @@
 from .sink import (
-  HttpTransportSinkProvider
+  HttpTransportSink
 )
-from ..builder import BaseBuilder
+#from ..builder import BaseBuilder
 from ..core import Scales
-from ..loadbalancer.aperture import ApertureBalancerSinkProvider
-from ..pool import SingletonPoolChannelSinkProvider
+from ..loadbalancer.aperture import ApertureBalancerSink
+from ..pool import SingletonPoolSink
 
 
 class _HttpIface(object):
@@ -16,23 +16,16 @@ class _HttpIface(object):
 
 
 class Http(object):
-  DEFAULT_TIMEOUT = 60
-
-  class SinkProvider(BaseBuilder.SinkProviderProvider):
-    _PROVIDERS = [
-      ApertureBalancerSinkProvider,
-      SingletonPoolChannelSinkProvider,
-      HttpTransportSinkProvider
-    ]
-
   @staticmethod
-  def Configure():
+  def NewBuilder():
     return Scales.NewBuilder(_HttpIface)\
-      .SetSinkProvider(Http.SinkProvider())
+      .WithSink(ApertureBalancerSink.Builder())\
+      .WithSink(SingletonPoolSink.Builder())\
+      .WithSink(HttpTransportSink.Builder())
 
   @staticmethod
-  def NewClient(uri, timeout=DEFAULT_TIMEOUT):
-    return Http.Configure()\
+  def NewClient(uri, timeout=60):
+    return Http.NewBuilder()\
       .SetUri(uri)\
       .SetTimeout(timeout)\
       .Build()
