@@ -3,6 +3,7 @@ Load balancers track an underlying server set, and return a sink to service a
 request.
 """
 
+import functools
 import logging
 import random
 
@@ -29,16 +30,16 @@ class LoadBalancerSink(ClientMessageSink):
     self._server_set_provider = server_set_provider
     self._next_sink_provider = next_provider
     server_set_provider.Initialize(
-      self._OnServerSetJoin,
-      self._OnServerSetLeave)
+      self.__OnServerSetJoin,
+      self.__OnServerSetLeave)
     server_set = server_set_provider.GetServers()
     random.shuffle(server_set)
     self._servers = {}
-    [self._AddServer(m) for m in server_set]
+    [self.__AddServer(m) for m in server_set]
     self._init_done.set()
     super(LoadBalancerSink, self).__init__()
 
-  def _OnServersChanged(self, instance, added):
+  def _OnServersChanged(self, endpoint, channel_factory, added):
     """Overridable by child classes.  Invoked when servers in the server set are
     added or removed.
 
@@ -48,7 +49,7 @@ class LoadBalancerSink(ClientMessageSink):
     """
     pass
 
-  def _AddServer(self, instance):
+  def __AddServer(self, instance):
     """Adds a servers to the set of servers available to the load balancer.
     Note: The new sink is not opened at this time.
 
@@ -58,21 +59,22 @@ class LoadBalancerSink(ClientMessageSink):
     if not instance.service_endpoint in self._servers:
       new_props = self._properties.copy()
       new_props.update({ SinkProperties.Endpoint: instance.service_endpoint })
-      channel = self._next_sink_provider.CreateSink(new_props)
-      self._servers[instance.service_endpoint] = channel
-      self._log.info("Instance %s joined (%d members)" % (instance.service_endpoint, len(self._servers)))
-      self._OnServersChanged((instance, channel), True)
+      channel_factory = functools.partial(self._next_sink_provider.CreateSink, new_props)
+      self._servers[instance.service_endpoint] = channel_factory
+      self._log.info("Instance %s joined (%d members)" % (
+          instance.service_endpoint, len(self._servers)))
+      self._OnServersChanged(instance.service_endpoint, channel_factory, True)
 
-  def _RemoveServer(self, instance):
+  def __RemoveServer(self, instance):
     """Removes a server from the load balancer.
 
     Args:
       instance - A Member object to be removed from the pool.
     """
-    channel = self._servers.pop(instance.service_endpoint, None)
-    self._OnServersChanged((instance, channel), False)
+    channel_factory = self._servers.pop(instance.service_endpoint, None)
+    self._OnServersChanged(instance.service_endpoint, channel_factory, False)
 
-  def _OnServerSetJoin(self, instance):
+  def __OnServerSetJoin(self, instance):
     """Invoked when an instance joins the server set.
 
     Args:
@@ -87,15 +89,16 @@ class LoadBalancerSink(ClientMessageSink):
     if instance.service_endpoint in self._servers:
       return
 
-    self._AddServer(instance)
+    self.__AddServer(instance)
 
-  def _OnServerSetLeave(self, instance):
+  def __OnServerSetLeave(self, instance):
     """Invoked when an instance leaves the server set.
 
     Args:
       instance - Instance leaving the cluster.
     """
     self._init_done.wait()
-    self._RemoveServer(instance)
+    self.__RemoveServer(instance)
 
-    self._log.info("Instance left (%d members)" % len(self._servers))
+    self._log.info("Instance %s left (%d members)" % (
+        instance.service_endpoint, len(self._servers)))

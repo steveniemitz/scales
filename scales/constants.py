@@ -1,10 +1,13 @@
 class Enum(object): pass
 
+# States <= Busy are considered open and healthy,
+# > Busy are closed and unhealthy.
 class ChannelState(object):
   Idle = 1
   Open = 2
   Busy = 3
   Closed = 4
+
 
 class Int(object):
   MaxValue = 2147483647

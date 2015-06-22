@@ -2,6 +2,7 @@ import logging
 import time
 
 import gevent
+from gevent import GreenletExit
 
 from .constants import (ChannelState, SinkProperties)
 from .message import (FailedFastError, MethodReturnMessage)
@@ -64,6 +65,9 @@ class ResurrectorSink(ClientMessageSink):
     self.on_faulted.Set(val)
 
   def _TryResurrect(self):
+    if not self._down_on:
+      return
+
     last_attempt = self._down_on
     wait_interval = self._initial_wait_interval
     self._log.info('Attempting to reopen faulted channel')
@@ -82,11 +86,13 @@ class ResurrectorSink(ClientMessageSink):
         self._down_on = None
         self._log.info('Reopened channel.')
         return
+      except GreenletExit:
+        return
       except:
         sink.Close()
 
       wait_interval **= self._backoff_exponent
-      wait_interval = max(wait_interval, self._max_wait_interval)
+      wait_interval = min(wait_interval, self._max_wait_interval)
 
   def Open(self):
     if not self.next_sink:
@@ -96,7 +102,8 @@ class ResurrectorSink(ClientMessageSink):
 
   def Close(self):
     if self._resurrector:
-      self._resurrector.kill()
+      self._resurrector.kill(block=False)
+      self._resurrector = None
     self._down_on = None
     if self.next_sink:
       self.next_sink.on_faulted.Unsubscribe(self._OnSinkFaulted)

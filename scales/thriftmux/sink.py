@@ -217,8 +217,11 @@ class SocketTransportSink(ClientMessageSink):
         and isinstance(reason, Exception)):
       self._open_result.set_exception(reason)
 
+    if self._ping_ar:
+      self._ping_ar.set_exception(reason)
+
     self._tag_map = {}
-    self._open_result = AsyncResult()
+    self._open_result = None
     self._send_queue = Queue()
 
   def _SendPingMessage(self):
@@ -234,6 +237,7 @@ class SocketTransportSink(ClientMessageSink):
     ar = self._ping_ar
     ar.wait(self._ping_timeout)
     if not ar.successful():
+      ar.set_exception(Exception('Ping timed out'))
       self._Shutdown('Ping Timeout')
 
   def _OnPingResponse(self, msg_type, stream):

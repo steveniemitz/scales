@@ -75,17 +75,18 @@ class Heap(object):
 class HeapBalancerSink(LoadBalancerSink):
   """A sink that implements a heap load balancer."""
   Penalty = Int.MaxValue
-  Zero = Int.MinValue + 1
+  Idle = Int.MinValue + 1
 
   class Node(object):
-    __slots__ = ('load', 'index', 'downq', 'avg_load', 'channel')
+    __slots__ = ('load', 'index', 'downq', 'avg_load', 'channel', 'endpoint')
 
-    def __init__(self, channel, load, index):
+    def __init__(self, channel, load, index, endpoint):
       self.channel = channel
       self.avg_load = 0
       self.load = load
       self.index = index
       self.downq = None
+      self.endpoint = endpoint
 
     def __lt__(self, other):
       """Compare to other, return true if (load, index) < other.(load, index)"""
@@ -97,7 +98,7 @@ class HeapBalancerSink(LoadBalancerSink):
         return self.index < other.index
 
   def __init__(self, next_provider, sink_properties, global_properties):
-    self._heap = [self.Node(FailingMessageSink(NoMembersError), self.Zero, 0)]
+    self._heap = [self.Node(FailingMessageSink(NoMembersError), self.Idle, 0, None)]
     self._downq = None
     self._size = 0
     self._open = False
@@ -159,7 +160,7 @@ class HeapBalancerSink(LoadBalancerSink):
             m.downq = n
         elif n.channel.state == ChannelState.Open:
           # The node was resurrected, mark it back up
-          self._log.info('Marking node %s up' % n)
+          self._log.info('Marking node %s up' % str(n.endpoint))
           n.load -= self.Penalty
           Heap.FixUp(self._heap, n.index)
           o = n.downq
@@ -180,13 +181,12 @@ class HeapBalancerSink(LoadBalancerSink):
         if n.channel.state  == ChannelState.Idle:
           # This node was the last chance, but still idle.
           # At this point there's nothing to do but wait for it to open.
-          # However, if we already waited for it to open
           open_ar = self._OpenNode(n)
           open_ar.wait()
         return n
       else:
         if n.channel.state == ChannelState.Closed:
-          self._log.warning('Marking node %s down' % n)
+          self._log.warning('Marking node %s down' % str(n.endpoint))
         # Node is now down
         n.downq = self._downq
         self._downq = n
@@ -204,14 +204,14 @@ class HeapBalancerSink(LoadBalancerSink):
       n - The node to return
     """
     n.load -= 1
-    if n.load < self.Zero:
+    if n.load < self.Idle:
       self._log.warning('Decrementing load below Zero')
-      n.load = self.Zero
-    if n.index < 0 and n.load > self.Zero:
+      n.load = self.Idle
+    if n.index < 0 and n.load > self.Idle:
       pass
-    elif n.index < 0 and n.load == self.Zero:
+    elif n.index < 0 and n.load == self.Idle:
       n.channel.Close()
-    elif n.load == self.Zero and self._size > 1:
+    elif n.load == self.Idle and self._size > 1:
       i = n.index
       Heap.Swap(self._heap, i, self._size)
       Heap.FixDown(self._heap, i, self._size - 1)
@@ -224,7 +224,7 @@ class HeapBalancerSink(LoadBalancerSink):
       Heap.FixUp(self._heap, n.index)
     self._OnPut(n)
 
-  def _AddNode(self, sink):
+  def _AddSink(self, endpoint, sink_factory):
     """Add a sink to the heap.
     The sink is immediately opened and initialized to Zero load.
 
@@ -234,7 +234,7 @@ class HeapBalancerSink(LoadBalancerSink):
     # It's ok if Open() threw an exception here, it'll be detected in __Get
     # and the node marked down.  We still want downed nodes in the heap.
     self._size += 1
-    new_node = self.Node(sink, self.Zero, self._size)
+    new_node = self.Node(sink_factory(), self.Idle, self._size, endpoint)
     self._heap.append(new_node)
     Heap.FixUp(self._heap, self._size)
     # Adding an Open() in here allows us to optimistically assume it'll be opened
@@ -246,7 +246,7 @@ class HeapBalancerSink(LoadBalancerSink):
     else:
       return AsyncResult.Complete()
 
-  def _RemoveNode(self, sink):
+  def _RemoveSink(self, endpoint):
     """Remove a sink from the heap.
     The sink is closed immediately if it has no outstanding load, otherwise the
     close is deferred until the sink goes idle.
@@ -254,7 +254,8 @@ class HeapBalancerSink(LoadBalancerSink):
     Args:
       sink - The sink to be removed.
     """
-    i = next((idx for idx, node in enumerate(self._heap) if node.channel == sink), 0)
+    i = next((idx for idx, node in enumerate(self._heap)
+              if node.endpoint == endpoint), 0)
     # The sink has already been removed from the heap.
     if i == 0:
       return
@@ -264,10 +265,10 @@ class HeapBalancerSink(LoadBalancerSink):
     self._heap.pop()
     self._size -= 1
     node.index = -1
-    if node.load == self.Zero:
+    if node.load == self.Idle or node.load >= 0:
       node.channel.Close()
 
-  def _OnServersChanged(self, endpoint, added):
+  def _OnServersChanged(self, endpoint, channel_factory, added):
     """Invoked by the LoadBalancer when an endpoint joins or leaves the
     server set.
 
@@ -275,11 +276,10 @@ class HeapBalancerSink(LoadBalancerSink):
       endpoint - A tuple of (endpoint, sink).
       added - True if the endpoint is being added, False if being removed.
     """
-    _, channel = endpoint
     if added:
-      self._AddNode(channel)
+      self._AddSink(endpoint, channel_factory)
     else:
-      self._RemoveNode(channel)
+      self._RemoveSink(endpoint)
 
   def _OnOpenComplete(self, ar, node):
     if ar.exception:

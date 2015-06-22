@@ -198,6 +198,9 @@ class FailingMessageSink(ClientMessageSink):
   def state(self):
     return ChannelState.Open
 
+  @property
+  def endpoint(self):
+    return None
 
 class ClientTimeoutSink(ClientMessageSink):
   class Varz(VarzBase):

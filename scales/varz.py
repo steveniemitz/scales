@@ -196,6 +196,9 @@ class VarzAggregator(object):
 
   @staticmethod
   def CalculatePercentile(values, pct):
+    if not any(values):
+      return 0
+
     k = (len(values) - 1) * pct
     f = math.floor(k)
     c = math.ceil(k)

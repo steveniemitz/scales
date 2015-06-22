@@ -11,12 +11,14 @@ node in the balancer is handling.
 """
 
 import math
+import random
 import time
 
 from .heap import HeapBalancerSink
 from ..async import AsyncResult
 from ..constants import (ChannelState, SinkProperties, SinkRole)
 from ..sink import SinkProvider
+from ..timer_queue import LOW_RESOLUTION_TIMER_QUEUE, LOW_RESOLUTION_TIME_SOURCE
 from ..varz import (
   Gauge,
   SourceType,
@@ -86,24 +88,29 @@ class ApertureBalancerSink(HeapBalancerSink):
     }
 
   def __init__(self, next_provider, sink_properties, global_properties):
-    self._idle_sinks = set()
-    self._active_sinks = set()
+    self._idle_endpoints = set()
+    self._active_endpoints = set()
     self._total = 0
     self._ema = Ema(5)
     self._time = MonoClock()
     self._min_size = sink_properties.min_size
     self._min_load = sink_properties.min_load
     self._max_load = sink_properties.max_load
+    self._jitter_min = sink_properties.jitter_min_sec
+    self._jitter_max = sink_properties.jitter_max_sec
     service_name = global_properties[SinkProperties.Label]
     self.__varz = self.ApertureVarz(service_name)
+    self._pending_endpoints = set()
     super(ApertureBalancerSink, self).__init__(next_provider, sink_properties, global_properties)
+    if self._jitter_min > 0:
+      self._ScheduleNextJitter()
 
   def _UpdateSizeVarz(self):
     """Update active and idle varz"""
-    self.__varz.active(len(self._active_sinks))
-    self.__varz.idle(len(self._idle_sinks))
+    self.__varz.active(len(self._active_endpoints))
+    self.__varz.idle(len(self._idle_endpoints))
 
-  def _AddNode(self, sink):
+  def _AddSink(self, endpoint, sink_factory):
     """Invoked when a node is added to the underlying server set.
 
     If the number of healthy nodes is < the minimum aperture size, the node
@@ -111,31 +118,32 @@ class ApertureBalancerSink(HeapBalancerSink):
     list.
 
     Args:
-      sink - The sink created by the load balancer.
+      endpoint - The endpoint being added to the server set.
+      sink_factory - A callable used to create a sink for the endpoint.
     """
-    num_healthy = len([c for c in self._active_sinks if c.state <= ChannelState.Open])
+    num_healthy = len([c for c in self._heap[1:] if c.channel.is_open])
     if num_healthy < self._min_size:
-      self._active_sinks.add(sink)
-      super(ApertureBalancerSink, self)._AddNode(sink)
+      self._active_endpoints.add(endpoint)
+      super(ApertureBalancerSink, self)._AddSink(endpoint, sink_factory)
     else:
-      self._idle_sinks.add(sink)
+      self._idle_endpoints.add(endpoint)
     self._UpdateSizeVarz()
 
-  def _RemoveNode(self, sink):
+  def _RemoveSink(self, endpoint):
     """Invoked when a node is removed from the underlying server set.
 
     If the node is currently active, it is removed from the aperture and replaced
     by an idle node (if one is available).  Otherwise, it is simply discarded.
 
     Args:
-      sink - The sink being removed from the server set.
+      endpoint - The endpoint being removed from the server set.
     """
-    super(ApertureBalancerSink, self)._RemoveNode(sink)
-    if sink in self._active_sinks:
-      self._active_sinks.discard(sink)
+    super(ApertureBalancerSink, self)._RemoveSink(endpoint)
+    if endpoint in self._active_endpoints:
+      self._active_endpoints.discard(endpoint)
       self._TryExpandAperture()
-    if sink in self._idle_sinks:
-      self._idle_sinks.discard(sink)
+    if endpoint in self._idle_endpoints:
+      self._idle_endpoints.discard(endpoint)
     self._UpdateSizeVarz()
 
   def _TryExpandAperture(self):
@@ -144,22 +152,22 @@ class ApertureBalancerSink(HeapBalancerSink):
 
     The aperture can be expanded if there are idle sinks available.
     """
-    sinks = self._idle_sinks.copy()
+    endpoints = list(self._idle_endpoints)
     added_node = None
-    while any(sinks):
-      new_sink = sinks.pop()
-      if new_sink.state != ChannelState.Closed:
-        self._idle_sinks.discard(new_sink)
-        self._active_sinks.add(new_sink)
-        self._log.debug('Expanding aperture.')
-        added_node = super(ApertureBalancerSink, self)._AddNode(new_sink)
-        break
+    new_endpoint = None
+    if any(endpoints):
+      new_endpoint = random.choice(endpoints)
+      self._idle_endpoints.discard(new_endpoint)
+      self._active_endpoints.add(new_endpoint)
+      self._log.debug('Expanding aperture to include %s.' % str(new_endpoint))
+      new_sink = self._servers[new_endpoint]
+      added_node = super(ApertureBalancerSink, self)._AddSink(new_endpoint, new_sink)
 
     self._UpdateSizeVarz()
     if added_node:
-      return added_node
+      return added_node, new_endpoint
     else:
-      return AsyncResult.Complete()
+      return AsyncResult.Complete(), None
 
   def _ContractAperture(self):
     """Attempt to contract the aperture.  By calling this it's assume the aperture
@@ -168,27 +176,30 @@ class ApertureBalancerSink(HeapBalancerSink):
     The aperture can be contracted if it's current size is larger than the
     min size.
     """
-    if len(self._active_sinks) > self._min_size:
-      heap_range = len(self._heap) / 2
-      most_loaded = None
-      # Scan the right half of the heap for the least-loaded node.
-      for n in self._heap[heap_range:]:
-        if not most_loaded or n.load > most_loaded.load:
-          most_loaded = n
-      most_loaded_sink = most_loaded.channel
-      self._active_sinks.discard(most_loaded_sink)
-      self._idle_sinks.add(most_loaded_sink)
-      self._log.debug('Contracting aperture to remove %s' % most_loaded_sink)
-      super(ApertureBalancerSink, self)._RemoveNode(most_loaded_sink)
-      self._UpdateSizeVarz()
+    if len(self._active_endpoints) > self._min_size:
+      # Scan the heap for the least-loaded node.  This isn't exactly in-order,
+      # but "close enough"
+      least_loaded_endpoint = None
+      for n in self._heap[1:]:
+        if n.endpoint not in self._pending_endpoints:
+          least_loaded_endpoint = n.endpoint
+          break
+
+      if least_loaded_endpoint:
+        self._active_endpoints.discard(least_loaded_endpoint)
+        self._idle_endpoints.add(least_loaded_endpoint)
+        super(ApertureBalancerSink, self)._RemoveSink(least_loaded_endpoint)
+        self._log.debug('Contracting aperture to remove %s' % str(least_loaded_endpoint))
+        self._UpdateSizeVarz()
 
   def _OnNodeDown(self, node):
     """Invoked by the base class when a node is marked down.
     In this case, if the downed node is currently in the aperture, we want to
     remove if, and then attempt to adjust the aperture.
     """
-    if node.channel in self._active_sinks:
-      return self._TryExpandAperture()
+    if node.endpoint in self._active_endpoints:
+      ar, _ = self._TryExpandAperture()
+      return ar
     else:
       return AsyncResult.Complete()
 
@@ -205,6 +216,31 @@ class ApertureBalancerSink(HeapBalancerSink):
     """
     self._AdjustAperture(-1)
 
+  def _ScheduleNextJitter(self):
+    """Schedule the aperture to jitter in a random amount of time between
+    _jitter_min and _jitter_max.
+    """
+    next_jitter = random.randint(self._jitter_min, self._jitter_max)
+    now = LOW_RESOLUTION_TIME_SOURCE.now
+    self._next_jitter = LOW_RESOLUTION_TIMER_QUEUE.Schedule(
+        now + next_jitter, self._Jitter)
+
+  def _Jitter(self):
+    """Attempt to expand the aperture by one node, and if successful,
+    contract it by a node (excluding the one that was just added).  This is
+    done asynchronously.
+    """
+    try:
+      ar, endpoint = self._TryExpandAperture()
+      if endpoint:
+        self._pending_endpoints.add(endpoint)
+        ar.wait()
+        if not ar.exception:
+          self._ContractAperture()
+        self._pending_endpoints.discard(endpoint)
+    finally:
+      self._ScheduleNextJitter()
+
   def _AdjustAperture(self, amount):
     """Adjusts the load average of the pool, and adjusts the aperture size
     if required by the new load average.
@@ -214,14 +250,14 @@ class ApertureBalancerSink(HeapBalancerSink):
     """
     self._total += amount
     avg = self._ema.Update(self._time.Sample(), self._total)
-    aperture_size = len(self._active_sinks)
+    aperture_size = len(self._active_endpoints)
     if aperture_size == 0:
       # Essentially infinite load.
       aperture_load = self._max_load
     else:
       aperture_load = avg / aperture_size
       self.__varz.load_average(aperture_load)
-    if aperture_load >= self._max_load and any(self._idle_sinks):
+    if aperture_load >= self._max_load and any(self._idle_endpoints):
       self._TryExpandAperture()
     elif aperture_load <= self._min_load and aperture_size > self._min_size:
       self._ContractAperture()
@@ -233,4 +269,6 @@ ApertureBalancerSink.Builder = SinkProvider(
   min_size = 1,
   min_load = 0.5,
   max_load = 2.0,
-  server_set_provider = None)
+  server_set_provider = None,
+  jitter_min_sec = 120,
+  jitter_max_sec = 240)

@@ -209,7 +209,7 @@ class Scales(object):
       replace_idx = next((i for i, n in enumerate(self._stack)
                           if predicate(n)), -1)
       if replace_idx == -1:
-        raise Exception("Unable to find sink of to replace.")
+        raise Exception("Unable to find sink to replace.")
       else:
         self._stack[replace_idx] = sink_params
       return self

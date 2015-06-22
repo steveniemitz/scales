@@ -9,6 +9,33 @@ from gevent.event import Event
 
 LOG = logging.getLogger('scales.TimerQueue')
 
+class LowResolutionTime(object):
+  """Provides a low-resolution time source with significantly lower overhead
+  than calling time.time()"""
+  __slots__ = '_interval', 'now'
+
+  def __init__(self, resolution=1):
+    """
+    Args:
+      resolution - The resolution of the timer in seconds, defaults to 1 second.
+    """
+    self._interval = resolution
+    self.now = time.time()
+    self._Update()
+
+  def _Update(self):
+    last_time = self.now
+    self.now = time.time()
+    # Figure out how far we missed the interval by
+    skew = max(0, (self.now - last_time) - self._interval)
+    # Adjust the next tick by that skew
+    next_tick = self.now + self._interval - skew
+    GLOBAL_TIMER_QUEUE.Schedule(next_tick, self._Update)
+
+  def Get(self):
+    return self.now
+
+
 class TimerQueue(object):
   """A timer that provides efficient scheduling of large numbers of events in
   the near future."""
@@ -110,3 +137,7 @@ class TimerQueue(object):
     return cancel
 
 GLOBAL_TIMER_QUEUE = TimerQueue()
+LOW_RESOLUTION_TIME_SOURCE = LowResolutionTime()
+LOW_RESOLUTION_TIMER_QUEUE = TimerQueue(
+  time_source=LOW_RESOLUTION_TIME_SOURCE.Get,
+  resolution=1)

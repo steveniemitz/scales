@@ -179,6 +179,14 @@ if __name__ == '__main__':
     yield
     print(time.time() - start_time)
 
+  def fn5():
+    import timeit
+    print(timeit.timeit('time.time()'))
+    print(timeit.timeit('LOW_RES_TIME.now', 'from scales.timer_queue import LOW_RES_TIME; LOW_RES_TIME.now'))
+    return
+
+  #fn5()
+
   def fn4():
     with time_it():
       buf = []
@@ -204,20 +212,12 @@ if __name__ == '__main__':
     from gen_py.scribe.ttypes import LogEntry
     from gen_py.hello import Hello
 
-    #client = Thrift.NewClient(ExampleService.Iface, 'tcp://localhost:8080')
+    client = ThriftMux.NewClient(ExampleService.Iface, 'zk://zk.aue1.tellapart.net/steve_test/service')
     #ret = client.passMessage(ttypes.Message('hi!'))
     #print(ret)
     #ret = client.passMessage(ttypes.Message('hi!'))
     #print(ret)
     #client.DispatcherClose()
-
-
-    client_builder = Thrift.NewBuilder(ExampleService.Iface).SetUri('tcp://localhost:8080')
-    client_builder.ReplaceRole(SinkRole.Pool, WatermarkPoolSink.Builder(min_watermark = 2))
-    client = client_builder.Build()
-    ret = client.passMessage(ttypes.Message('hi!'))
-    print(ret)
-    return
     #
     # p = Scales.SERVICE_REGISTRY[ExampleService.Iface][0]
     # while p:
@@ -259,9 +259,10 @@ if __name__ == '__main__':
         except:
           traceback.print_exc()
           pass
-        gevent.sleep(random.random() / 10)
+        #gevent.sleep(random.random() / 10)
+        gevent.sleep(10)
 
-    for n in range(2):
+    for n in range(1):
       gevent.spawn(fn2, n)
 
     e = Event()

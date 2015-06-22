@@ -5,7 +5,11 @@ import time
 import gevent
 
 from ..async import AsyncResult
-from ..constants import (ChannelState, SinkProperties, SinkRole)
+from ..constants import (
+  ChannelState,
+  SinkProperties,
+  SinkRole
+)
 from ..message import (
   ClientError,
   Deadline,
