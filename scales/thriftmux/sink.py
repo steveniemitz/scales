@@ -1,4 +1,5 @@
 import logging
+import random
 import time
 from struct import (pack, unpack)
 from cStringIO import StringIO
@@ -100,6 +101,7 @@ class SocketTransportSink(ClientMessageSink):
 
   SINK_LOG = ROOT_LOG.getChild('SocketTransportSink')
   _EMPTY_DCT = {}
+  _CLOSE_INVOKED = "Close invoked"
 
   class Varz(VarzBase):
     """
@@ -190,14 +192,19 @@ class SocketTransportSink(ClientMessageSink):
       raise
 
   def Close(self):
-    self._Shutdown('Close invoked', False)
+    self._Shutdown(self._CLOSE_INVOKED, False)
 
   def _Shutdown(self, reason, fault=True):
     if not self.isActive:
       return
 
     self._state = ChannelState.Closed
-    self._log.warning('Shutting down transport [%s].' % str(reason))
+
+    if reason == self._CLOSE_INVOKED:
+      log_fn = self._log.debug
+    else:
+      log_fn = self._log.warning
+    log_fn('Shutting down transport [%s].' % str(reason))
     self._varz.active(0)
     self._socket.close()
     [g.kill(block=False) for g in self._greenlets]
@@ -255,7 +262,7 @@ class SocketTransportSink(ClientMessageSink):
   def _PingLoop(self):
     """Periodically pings the remote server."""
     while self.isActive:
-      gevent.sleep(30)
+      gevent.sleep(random.randint(30, 40))
       if self.isActive:
         self._SendPingMessage()
       else:
@@ -397,6 +404,16 @@ class SocketTransportSink(ClientMessageSink):
                 *self._EncodeTag(tag))
 
   def AsyncProcessRequest(self, sink_stack, msg, stream, headers):
+    if self._state == ChannelState.Idle and self._open_result:
+      self._log.debug('Waiting for channel to be open')
+      self._open_result.wait()
+
+    if ((self._state == ChannelState.Idle and not self._open_result)
+         or self._state == ChannelState.Closed) and sink_stack is not None:
+      err_msg = MethodReturnMessage(error=Exception('Sink not open.'))
+      sink_stack.AsyncProcessResponseMessage(err_msg)
+      return
+
     if not msg.is_one_way:
       tag = self._tag_pool.get()
       msg.properties[Tag.KEY] = tag

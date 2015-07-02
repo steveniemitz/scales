@@ -11,18 +11,32 @@ Downed nodes are tracked by setting a node's load to > 0.  A linked list of down
 nodes is kept to resurrect downed nodes if they become active again.
 """
 
+import functools
 import random
+
+try:
+  from gevent.lock import RLock # pylint: disable=E0611
+except ImportError:
+  from gevent.coros import RLock
 
 from .base import (
   LoadBalancerSink,
   NoMembersError
 )
 from ..async import AsyncResult
-from ..constants import (Int, ChannelState, MessageProperties)
-from ..sink import (
-  FailingMessageSink,
+from ..constants import (
+  ChannelState,
+  Int,
+  MessageProperties,
+  SinkProperties
 )
-
+from ..sink import FailingMessageSink
+from ..varz import (
+  Counter,
+  Gauge,
+  SourceType,
+  VarzBase
+)
 
 class Heap(object):
   """A utility class to perform heap functions"""
@@ -34,6 +48,9 @@ class Heap(object):
       heap - The heap array.
       i, j - The indexes int the array to swap.
     """
+    if i == 0 or j == 0:
+      raise Exception("heap swapping of element 0 should never happen.")
+
     heap[i], heap[j] = heap[j], heap[i]
     heap[i].index = i
     heap[j].index = j
@@ -72,10 +89,35 @@ class Heap(object):
         break
 
 
+def synchronized(fn):
+  """Runs the wrapped method under a lock.
+  The self parameter to the wrapped function is expected to have a __heap_lock
+  attribute.
+  """
+  @functools.wraps(fn)
+  def wrapper(self, *args, **kwargs):
+    with self._heap_lock:
+      return fn(self, *args, **kwargs)
+  return wrapper
+
+
 class HeapBalancerSink(LoadBalancerSink):
   """A sink that implements a heap load balancer."""
   Penalty = Int.MaxValue
   Idle = Int.MinValue + 1
+
+  class HeapVarz(VarzBase):
+    """
+    size - The number of nodes in the pool
+    no_members - The number of times the balancer served a failing requests
+                 because there were no members in the pool.
+    """
+    _VARZ_BASE_NAME = 'scales.pool.HeapBalancer'
+    _VARZ_SOURCE_TYPE = SourceType.Service
+    _VARZ = {
+      'size': Gauge,
+      'no_members': Counter
+    }
 
   class Node(object):
     __slots__ = ('load', 'index', 'downq', 'avg_load', 'channel', 'endpoint')
@@ -98,31 +140,43 @@ class HeapBalancerSink(LoadBalancerSink):
         return self.index < other.index
 
   def __init__(self, next_provider, sink_properties, global_properties):
-    self._heap = [self.Node(FailingMessageSink(NoMembersError), self.Idle, 0, None)]
+    self._heap = [self.Node(
+        FailingMessageSink(functools.partial(Exception, "this sink should never be used")),
+        self.Idle, 0, None)]
+    self._no_members = FailingMessageSink(NoMembersError)
     self._downq = None
     self._size = 0
     self._open = False
+    self._heap_lock = RLock()
+    service_name = global_properties[SinkProperties.Label]
+    self.__varz = self.HeapVarz(service_name)
     super(HeapBalancerSink, self).__init__(next_provider, sink_properties, global_properties)
 
   def AsyncProcessRequest(self, sink_stack, msg, stream, headers):
     if self._size == 0:
-      n = self._heap[0]
+      channel = self._no_members
+      self.__varz.no_members()
     else:
-      n = self.__Get()
-      n.load += 1
-      Heap.FixDown(self._heap, n.index, self._size)
-      self._OnGet(n)
+      with self._heap_lock:
+        n = self.__Get()
+        n.load += 1
+        Heap.FixDown(self._heap, n.index, self._size)
+        self._OnGet(n)
+
       put_called = [False]
       def PutWrapper():
         if not put_called[0]:
-          put_called[0] = True
-          self.__Put(n)
+          with self._heap_lock:
+            put_called[0] = True
+            self.__Put(n)
       sink_stack.Push(self, PutWrapper)
 
-    endpoint = getattr(n.channel, 'endpoint', None)
-    if endpoint:
-      msg.properties[MessageProperties.Endpoint] = n.channel.endpoint
-    n.channel.AsyncProcessRequest(sink_stack, msg, stream, headers)
+      endpoint = getattr(n.channel, 'endpoint', None)
+      if endpoint:
+        msg.properties[MessageProperties.Endpoint] = n.channel.endpoint
+      channel = n.channel
+
+    channel.AsyncProcessRequest(sink_stack, msg, stream, headers)
 
   def AsyncProcessResponse(self, sink_stack, context, stream, msg):
     context()
@@ -160,8 +214,8 @@ class HeapBalancerSink(LoadBalancerSink):
             m.downq = n
         elif n.channel.state == ChannelState.Open:
           # The node was resurrected, mark it back up
-          self._log.info('Marking node %s up' % str(n.endpoint))
           n.load -= self.Penalty
+          ep = n.endpoint
           Heap.FixUp(self._heap, n.index)
           o = n.downq
           n.downq = None
@@ -170,30 +224,22 @@ class HeapBalancerSink(LoadBalancerSink):
             self._downq = n
           else:
             m.downq = n
+          self._log.info('Marking node %s up' % str(ep))
         else:
           # No change, move to the next node in the linked list
           m, n = n, n.downq
 
       n = self._heap[1]
-      if n.channel.state == ChannelState.Open:
-        return n
-      elif n.load >= 0:
-        if n.channel.state  == ChannelState.Idle:
-          # This node was the last chance, but still idle.
-          # At this point there's nothing to do but wait for it to open.
-          open_ar = self._OpenNode(n)
-          open_ar.wait()
+      if n.channel.state == ChannelState.Open or n.load >= 0:
         return n
       else:
-        if n.channel.state == ChannelState.Closed:
-          self._log.warning('Marking node %s down' % str(n.endpoint))
         # Node is now down
         n.downq = self._downq
         self._downq = n
         n.load += self.Penalty
         Heap.FixDown(self._heap, 1, self._size)
-        if n.channel.state == ChannelState.Closed:
-          self._OnNodeDown(n)
+        self._OnNodeDown(n)
+        self._log.warning('Marking node %s down' % str(n.endpoint))
         # Loop
 
   def __Put(self, n):
@@ -224,6 +270,7 @@ class HeapBalancerSink(LoadBalancerSink):
       Heap.FixUp(self._heap, n.index)
     self._OnPut(n)
 
+  @synchronized
   def _AddSink(self, endpoint, sink_factory):
     """Add a sink to the heap.
     The sink is immediately opened and initialized to Zero load.
@@ -231,9 +278,8 @@ class HeapBalancerSink(LoadBalancerSink):
     Args:
       sink - The sink that was just added.
     """
-    # It's ok if Open() threw an exception here, it'll be detected in __Get
-    # and the node marked down.  We still want downed nodes in the heap.
     self._size += 1
+    self.__varz.size(self._size)
     new_node = self.Node(sink_factory(), self.Idle, self._size, endpoint)
     self._heap.append(new_node)
     Heap.FixUp(self._heap, self._size)
@@ -246,6 +292,14 @@ class HeapBalancerSink(LoadBalancerSink):
     else:
       return AsyncResult.Complete()
 
+  def _FindNodeByEndpoint(self, endpoint):
+    i = next((idx for idx, node in enumerate(self._heap)
+              if node.endpoint == endpoint), 0)
+    if i == 0:
+      return None
+    return self._heap[i]
+
+  @synchronized
   def _RemoveSink(self, endpoint):
     """Remove a sink from the heap.
     The sink is closed immediately if it has no outstanding load, otherwise the
@@ -254,19 +308,23 @@ class HeapBalancerSink(LoadBalancerSink):
     Args:
       sink - The sink to be removed.
     """
-    i = next((idx for idx, node in enumerate(self._heap)
-              if node.endpoint == endpoint), 0)
-    # The sink has already been removed from the heap.
-    if i == 0:
-      return
-    node = self._heap[i]
+    node = self._FindNodeByEndpoint(endpoint)
+    if not node or node.index < 0:
+      return False
+
+    i = node.index
     Heap.Swap(self._heap, i, self._size)
     Heap.FixDown(self._heap, i, self._size - 1)
     self._heap.pop()
     self._size -= 1
+    self.__varz.size(self._size)
+    if self._size < 0:
+      self._log.warning("Decrementing size below 0")
+      self._size = 0
     node.index = -1
     if node.load == self.Idle or node.load >= 0:
       node.channel.Close()
+    return True
 
   def _OnServersChanged(self, endpoint, channel_factory, added):
     """Invoked by the LoadBalancer when an endpoint joins or leaves the
