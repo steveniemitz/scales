@@ -1,7 +1,6 @@
 from .sink import (
   HttpTransportSink
 )
-#from ..builder import BaseBuilder
 from ..core import Scales
 from ..loadbalancer.aperture import ApertureBalancerSink
 from ..pool import SingletonPoolSink
@@ -9,9 +8,17 @@ from ..pool import SingletonPoolSink
 
 class _HttpIface(object):
   def Get(self, url, **kwargs):
+    """Issue an HTTP GET to url.
+
+    kwargs aligns with arguments to requests, although timeout is ignored.
+    """
     pass
 
   def Post(self, url, **kwargs):
+    """Issue an HTTP POST to url.
+
+    kwargs aligns with arguments to requests, although timeout is ignored.
+    """
     pass
 
 

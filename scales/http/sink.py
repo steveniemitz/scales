@@ -15,6 +15,7 @@ class HttpTransportSink(ClientMessageSink):
     self._endpoint = global_properties[SinkProperties.Endpoint]
     self._open_result = AsyncResult.Complete()
     self._session = requests.Session()
+    self._raise_on_http_error = sink_properties.raise_on_http_error
 
   def Open(self):
     return self._open_result
@@ -27,7 +28,7 @@ class HttpTransportSink(ClientMessageSink):
   def state(self):
     return ChannelState.Open
 
-  def _DoHttpRequestAsync(self, sink_stack, deadline, method, url, data=None, **kwargs):
+  def _DoHttpRequestAsync(self, sink_stack, deadline, method, url, **kwargs):
     if url.startswith('/'):
       url = url[1:]
     method = method.lower()
@@ -39,19 +40,17 @@ class HttpTransportSink(ClientMessageSink):
     else:
       timeout = None
 
-    if not data:
-      data = kwargs
-
     url = 'http://%s:%s/%s' % (self._endpoint.host, self._endpoint.port, url)
     try:
+      kwargs['timeout'] = timeout
       if method == 'get':
-        response = self._session.get(url, params=data, timeout=timeout)
+        response = self._session.get(url, **kwargs)
       elif method == 'post':
-        response = self._session.post(url, data, timeout=timeout)
+        response = self._session.post(url, **kwargs)
       else:
         raise NotImplementedError()
 
-      if 400 <= response.status_code < 600:
+      if self._raise_on_http_error and 400 <= response.status_code < 600:
         err_text = 'HTTP Error %d: %s.' % (response.status_code, response.reason)
         if response.text:
           err_text += '\nThe server returned:\n%s' % response.text
@@ -79,4 +78,5 @@ class HttpTransportSink(ClientMessageSink):
   def AsyncProcessResponse(self, sink_stack, context, stream, msg):
     pass
 
-HttpTransportSink.Builder = SinkProvider(HttpTransportSink)
+HttpTransportSink.Builder = SinkProvider(
+    HttpTransportSink, raise_on_http_error=True)
