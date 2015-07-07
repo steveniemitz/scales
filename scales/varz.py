@@ -1,11 +1,9 @@
 from __future__ import absolute_import
 
 from contextlib import contextmanager
-from collections import (
-  defaultdict,
-  deque
-)
+from collections import defaultdict
 import functools
+import itertools
 import math
 import random
 import time
@@ -146,16 +144,31 @@ class VarzBase(object):
   def __getattr__(self, item):
     return self._VARZ[item]
 
+class _Reservoir(object):
+  __slots__ = ('data', 'i', 'max_size')
+
+  def __init__(self, max_size, data=None):
+    self.data = data or []
+    self.i = len(self.data)
+    self.max_size = max_size
+
+  def Sample(self, value):
+    if self.i < self.max_size:
+      self.data.append(value)
+    else:
+      j = random.randint(0, self.i)
+      if j < self.max_size:
+        self.data[j] = value
+    self.i += 1
+
 
 class VarzReceiver(object):
   """A stub class to receive varz from Scales."""
   VARZ_METRICS = {}
   VARZ_DATA = defaultdict(lambda: defaultdict(int))
-  VARZ_DATA_PERCENTILES = defaultdict(lambda: defaultdict(float))
-  VARZ_PERCENTILES = [.5, .90, .95, .99]
+  VARZ_PERCENTILES = [.5, .90, .99, .999, .9999]
 
-  _PERCENTILE_P = .1
-  _MAX_PERCENTILE_BUCKET = 1000
+  _MAX_PERCENTILE_SIZE = 1000
 
   @staticmethod
   def RegisterMetric(metric, varz_type, source_type):
@@ -173,17 +186,11 @@ class VarzReceiver(object):
 
   @classmethod
   def RecordPercentileSample(cls, source, metric, value):
-    if random.random() > VarzReceiver._PERCENTILE_P:
-      return
-
-    queue = cls.VARZ_DATA[metric][source]
-    if queue == 0:
-      queue = deque()
-      cls.VARZ_DATA[metric][source] = queue
-
-    if len(queue) > cls._MAX_PERCENTILE_BUCKET:
-      queue.popleft()
-    queue.append(value)
+    reservoir = cls.VARZ_DATA[metric][source]
+    if reservoir == 0:
+      reservoir = _Reservoir(cls._MAX_PERCENTILE_SIZE)
+      cls.VARZ_DATA[metric][source] = reservoir
+    reservoir.Sample(value)
 
 class VarzAggregator(object):
   """An aggregator that rolls metrics up to the service level."""
@@ -209,6 +216,21 @@ class VarzAggregator(object):
     return d0 + d1
 
   @staticmethod
+  def _Downsample(lst, target_size):
+    if target_size == 0:
+      return
+    elif len(lst) < 3 or len(lst) <= target_size:
+      for n in lst:
+        yield n
+    else:
+      skip = len(lst) / target_size
+      lst = sorted(lst)
+      for i, n in enumerate(lst[0:-2]):
+        if i % skip == 0:
+          yield n
+      yield lst[-1]
+
+  @staticmethod
   def Aggregate(varz, metrics, key_selector=None):
     """Aggregate varz
 
@@ -231,16 +253,16 @@ class VarzAggregator(object):
         continue
       varz_type, source_type = metric_info
       metric_agg = agg[metric]
+      gevent.sleep(0)
       for source in varz[metric].keys():
-        gevent.sleep(0)
         key = key_selector(source)
         data = varz[metric][source]
         if key not in metric_agg:
           metric_agg[key] = VarzAggregator._Agg()
-          if isinstance(data, deque):
+          if isinstance(data, _Reservoir):
             metric_agg[key].work = []
 
-        if isinstance(data, deque):
+        if isinstance(data, _Reservoir):
           metric_agg[key].work.append(data)
         else:
           metric_agg[key].work += data
@@ -253,15 +275,17 @@ class VarzAggregator(object):
       elif varz_type in (VarzType.AverageTimer, VarzType.AverageRate):
         for source_agg in metric_agg.values():
           pct_sample = 1.0 / source_agg.count
-          values = []
-          for v in source_agg.work:
-            values.extend(random.sample(v, int(len(v) * pct_sample)))
-          values = sorted(values)
-
+          values = [VarzAggregator._Downsample(v.data, int(len(v.data) * pct_sample))
+                    for v in source_agg.work]
+          values = sorted(itertools.chain(*values))
           source_agg.total = [
             VarzAggregator.CalculatePercentile(values, pct)
             for pct in VarzReceiver.VARZ_PERCENTILES
-          ]
+            ]
+          if any(values):
+            source_agg.total.insert(0, sum(values) / float(len(values)))
+          else:
+            source_agg.total.insert(0, 0)
           source_agg.work = None
       else:
         for source_agg in metric_agg.values():

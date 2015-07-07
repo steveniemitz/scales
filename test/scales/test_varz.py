@@ -1,8 +1,14 @@
-from collections import deque
+import itertools
 import random
 import unittest
 
-from scales.varz import SourceType, VarzType, VarzAggregator
+from scales.varz import (
+  _Reservoir,
+  SourceType,
+  VarzAggregator,
+  VarzReceiver,
+  VarzType,
+)
 
 def _round(arr, n):
   return [round(i, n) for i in arr]
@@ -28,16 +34,16 @@ class VarzTestCase(unittest.TestCase):
   def _getSampleRateData(self):
     test_varz = {
       'metric1': {
-        (None, 'service1', 'enpoint1'): deque([1,2]),
-        (None, 'service1', 'enpoint2'): deque([2,3])
+        (None, 'service1', 'enpoint1'): _Reservoir([1,2]),
+        (None, 'service1', 'enpoint2'): _Reservoir([2,3])
       },
       'metric2': {
-        (None, 'service1', 'endpoint1'): deque([1,2]),
-        (None, 'service2', 'endpoint1'): deque([2,3])
+        (None, 'service1', 'endpoint1'): _Reservoir([1,2]),
+        (None, 'service2', 'endpoint1'): _Reservoir([2,3])
       },
       'metric3': {
-        ('method1', 'service1', None): deque([1,2]),
-        ('method2', 'service1', None): deque([2,3]),
+        ('method1', 'service1', None): _Reservoir([1,2]),
+        ('method2', 'service1', None): _Reservoir([2,3]),
       }
     }
     return test_varz
@@ -67,10 +73,41 @@ class VarzTestCase(unittest.TestCase):
     }
     random.seed(1)
     aggs = VarzAggregator.Aggregate(test_varz, metrics)
-    self.assertEqual(_round(aggs['metric1']['service1'].total, 2), [2.5, 2.9, 2.95, 2.99])
-    self.assertEqual(_round(aggs['metric2']['service1'].total, 2), [1.5, 1.9, 1.95, 1.99])
-    self.assertEqual(_round(aggs['metric2']['service2'].total, 2), [2.5, 2.9, 2.95, 2.99])
-    self.assertEqual(_round(aggs['metric3']['service1'].total, 2), [2.0, 2.0, 2.00, 2.00])
+    self.assertEqual(_round(aggs['metric1']['service1'].total, 2), [2.0, 2.0, 2.70, 2.97, 3.0, 3.0])
+    self.assertEqual(_round(aggs['metric2']['service1'].total, 2), [1.5, 1.5, 1.90, 1.99, 2.0, 2.0])
+    self.assertEqual(_round(aggs['metric2']['service2'].total, 2), [2.5, 2.5, 2.90, 2.99, 3.0, 3.0])
+    self.assertEqual(_round(aggs['metric3']['service1'].total, 2), [2.0, 2.0, 2.70, 2.97, 3.0, 3.0])
+
+  def testShortStreamingPercentile(self):
+    source = (None, 'test', None)
+    metric = 'test'
+    VarzReceiver.VARZ_METRICS.clear()
+    VarzReceiver.VARZ_DATA.clear()
+    VarzReceiver.RegisterMetric(metric, VarzType.AverageTimer, SourceType.Service)
+    VarzReceiver.RecordPercentileSample(source, metric, 1)
+    VarzReceiver.RecordPercentileSample(source, metric, 2)
+    VarzReceiver.RecordPercentileSample(source, metric, 3)
+    VarzReceiver.RecordPercentileSample(source, metric, 2)
+    aggs = VarzAggregator.Aggregate(VarzReceiver.VARZ_DATA, VarzReceiver.VARZ_METRICS)
+    self.assertEqual(
+      _round(aggs[metric]['test'].total, 2),
+      [2.0, 2.0, 2.70, 2.97, 3.0, 3.0])
+
+  def testLongStreamingPercentile(self):
+    source = (None, 'test', None)
+    metric = 'test'
+    VarzReceiver.VARZ_METRICS.clear()
+    VarzReceiver.VARZ_DATA.clear()
+
+    VarzReceiver.RegisterMetric(metric, VarzType.AverageTimer, SourceType.Service)
+    random.seed(1)
+    for n in xrange(10000):
+      VarzReceiver.RecordPercentileSample(source, metric, random.randint(0, 100))
+
+    aggs = VarzAggregator.Aggregate(VarzReceiver.VARZ_DATA, VarzReceiver.VARZ_METRICS)
+    self.assertEqual(
+      _round(aggs[metric]['test'].total, 2),
+      [49.07, 48.0, 90.0, 99.0, 100.0, 100.0])
 
 if __name__ == '__main__':
   unittest.main()

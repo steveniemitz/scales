@@ -22,7 +22,8 @@ class HttpTransportSink(ClientMessageSink):
 
   def Close(self):
     self._session.close()
-    self._session = requests.Session()
+    if requests:
+      self._session = requests.Session()
 
   @property
   def state(self):
