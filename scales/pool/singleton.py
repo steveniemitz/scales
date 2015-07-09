@@ -1,7 +1,7 @@
 from .base import PoolSink
 from ..async import AsyncResult
 from ..constants import (ChannelState, SinkRole)
-from ..sink import SinkProvider
+from ..sink import SinkProvider, SinkProperties
 
 
 class SingletonPoolSink(PoolSink):
@@ -14,6 +14,9 @@ class SingletonPoolSink(PoolSink):
 
   def __init__(self, sink_provider, sink_properties, global_properties):
     super(SingletonPoolSink, self).__init__(sink_provider, global_properties)
+    endpoint = global_properties[SinkProperties.Endpoint]
+    endpoint_source = '%s:%d' % (endpoint.host, endpoint.port)
+    self.endpoint = endpoint_source
     self._ref_count = 0
 
   def Open(self):

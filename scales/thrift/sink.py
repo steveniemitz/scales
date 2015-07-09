@@ -3,6 +3,7 @@ from cStringIO import StringIO
 import time
 
 import gevent
+from thrift.protocol.TBinaryProtocol import TBinaryProtocolAcceleratedFactory
 
 from ..async import AsyncResult
 from ..constants import (
@@ -218,7 +219,9 @@ class ThriftSerializerSink(ClientMessageSink):
 
   def __init__(self, next_provider, sink_properties, global_properties):
     super(ThriftSerializerSink, self).__init__()
-    self._serializer = MessageSerializer(global_properties[SinkProperties.ServiceInterface])
+    self._serializer = MessageSerializer(
+        global_properties[SinkProperties.ServiceInterface],
+        sink_properties.protocol_factory)
     self.next_sink = next_provider.CreateSink(global_properties)
 
   def AsyncProcessRequest(self, sink_stack, msg, stream, headers):
@@ -249,4 +252,7 @@ class ThriftSerializerSink(ClientMessageSink):
         msg = MethodReturnMessage(error=ex)
       sink_stack.AsyncProcessResponseMessage(msg)
 
-ThriftSerializerSink.Builder = SinkProvider(ThriftSerializerSink, SinkRole.Formatter)
+ThriftSerializerSink.Builder = SinkProvider(
+  ThriftSerializerSink,
+  SinkRole.Formatter,
+  protocol_factory=TBinaryProtocolAcceleratedFactory())

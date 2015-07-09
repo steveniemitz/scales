@@ -73,6 +73,7 @@ class WatermarkPoolSink(PoolSink):
     self._current_size = 0
     self._state = ChannelState.Idle
     socket_name = '%s:%s' % (endpoint.host, endpoint.port)
+    self.endpoint = socket_name
     self._varz = self.Varz((name, socket_name))
     self._log = self.ROOT_LOG.getChild('[%s.%s]' % (name, socket_name))
     super(WatermarkPoolSink, self).__init__(next_provider, global_properties)

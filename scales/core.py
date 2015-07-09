@@ -82,8 +82,7 @@ class ClientProxyBuilder(object):
 
 class ScalesUriParser(object):
   """Default Uri Parser for scales.  Handles both tcp:// and zk:// URIs"""
-
-  Endpoint = collections.namedtuple('Endpoint', 'host port')
+  from .loadbalancer.zookeeper import Endpoint
   Server = collections.namedtuple('Server', 'service_endpoint')
 
   def __init__(self):

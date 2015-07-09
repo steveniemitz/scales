@@ -171,9 +171,7 @@ class HeapBalancerSink(LoadBalancerSink):
             self.__Put(n)
       sink_stack.Push(self, PutWrapper)
 
-      endpoint = getattr(n.channel, 'endpoint', None)
-      if endpoint:
-        msg.properties[MessageProperties.Endpoint] = n.channel.endpoint
+      msg.properties[MessageProperties.Endpoint] = n.endpoint
       channel = n.channel
 
     channel.AsyncProcessRequest(sink_stack, msg, stream, headers)

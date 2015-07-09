@@ -50,10 +50,11 @@ class ZooKeeperServerSetProvider(ServerSetProvider):
   from kazoo.client import KazooClient
   from kazoo.handlers.gevent import SequentialGeventHandler
 
-  def __init__(self, zk_servers, zk_path, zk_timeout=30):
+  def __init__(self, zk_servers, zk_path, zk_timeout=30, member_prefix='member_'):
     self._zk_client = self._GetZooKeeperClient(zk_servers, zk_timeout)
     self._zk_path = zk_path
     self._server_set = None
+    self._member_prefix = member_prefix
 
   def _GetZooKeeperClient(self, zk_servers, zk_timeout):
     return self.KazooClient(
@@ -62,10 +63,13 @@ class ZooKeeperServerSetProvider(ServerSetProvider):
       handler=self.SequentialGeventHandler(),
       randomize_hosts=True)
 
+  def _MemberFilter(self, node):
+    return node.startswith(self._member_prefix)
+
   def Initialize(self, on_join, on_leave):
     self._zk_client.start()
     self._server_set = self.ServerSet(
-      self._zk_client, self._zk_path, on_join, on_leave)
+      self._zk_client, self._zk_path, on_join, on_leave, self._MemberFilter)
 
   def GetServers(self):
     if not self._server_set:

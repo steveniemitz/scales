@@ -113,6 +113,8 @@ class MessageDispatcher(ClientMessageSink):
     open_latency = open_time - start_time
 
     disp_msg = MethodCallMessage(self._service, method, args, kwargs)
+    # Init the properties dictionary w/ an empty endpoint
+    disp_msg.properties[MessageProperties.Endpoint] = None
     if timeout:
       # Calculate the deadline for this method call.
       # Reduce it by the time it took for the open() to complete.
@@ -166,6 +168,8 @@ class MessageDispatcher(ClientMessageSink):
     source, start_time, ar, msg_props = context
     method, service, endpoint = source
     endpoint = msg_props.get(MessageProperties.Endpoint, None)
+    if endpoint and not isinstance(endpoint, str):
+      endpoint = str(endpoint)
     host_source = method, service, endpoint
     end_time = time.time()
     self.Varz.request_latency(host_source, end_time - start_time) # pylint: disable=no-member

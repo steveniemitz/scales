@@ -161,7 +161,7 @@ class ServerSet(object):
     def is_blocking(self):
       return self._count != 0
 
-  def __init__(self, zk, zk_path, on_join=None, on_leave=None):
+  def __init__(self, zk, zk_path, on_join=None, on_leave=None, member_filter=None):
     """Initialize the ServerSet, ensuring the zk_path exists.
 
     Args:
@@ -172,6 +172,7 @@ class ServerSet(object):
       on_leave - An optional function to call when members leave the node.
     """
     def noop(*args, **kwargs): pass
+    def true(*args, **kwargs): return True
     self._log = ROOT_LOG.getChild('[%s]' % zk_path)
     self._log.info('TellApart ServerSet intializing on path %s' % zk_path)
 
@@ -190,6 +191,7 @@ class ServerSet(object):
     self._notification_queue = Queue(0)
     self._watching = False
     self._cb_blocker = self._CallbackBlocker()
+    self._member_filter = member_filter or true
     gevent.spawn(self._notification_worker)
 
     if on_join or on_leave:
@@ -237,7 +239,9 @@ class ServerSet(object):
       return None
 
   def _zk_nodes_to_members(self, nodes):
-    return [m for m in (self._safe_zk_node_to_member(n) for n in nodes) if m]
+    return [m for m in (self._safe_zk_node_to_member(n) for n in nodes
+                        if self._member_filter(n))
+            if m]
 
   def _monitor(self):
     """Begins watching the ZK path for node changes.
@@ -309,7 +313,7 @@ class ServerSet(object):
     Args:
       children - The new set of child nodes.
     """
-    children = set(children)
+    children = set([c for c in children if self._member_filter(c)])
     current_nodes = set(self._nodes)
     self._nodes = children
     new_nodes = children - current_nodes
