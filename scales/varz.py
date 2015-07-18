@@ -1,7 +1,7 @@
 from __future__ import absolute_import
 
 from contextlib import contextmanager
-from collections import defaultdict
+from collections import defaultdict, deque
 import functools
 import itertools
 import math
@@ -144,21 +144,23 @@ class VarzBase(object):
   def __getattr__(self, item):
     return self._VARZ[item]
 
-class _Reservoir(object):
-  __slots__ = ('data', 'i', 'max_size')
+class _SampleSet(object):
+  __slots__ = ('data', 'i', 'p', 'max_size')
 
-  def __init__(self, max_size, data=None):
-    self.data = data or []
-    self.i = len(self.data)
+  def __init__(self, max_size, data=None, p=.1):
+    data = data or []
+    self.data = deque(data, max_size)
+    self.i = len(data)
+    self.p = p
     self.max_size = max_size
 
   def Sample(self, value):
     if self.i < self.max_size:
       self.data.append(value)
     else:
-      j = random.randint(0, self.i)
-      if j < self.max_size:
-        self.data[j] = value
+      j = random.random()
+      if j < self.p:
+        self.data.append(value)
     self.i += 1
 
 
@@ -188,7 +190,7 @@ class VarzReceiver(object):
   def RecordPercentileSample(cls, source, metric, value):
     reservoir = cls.VARZ_DATA[metric][source]
     if reservoir == 0:
-      reservoir = _Reservoir(cls._MAX_PERCENTILE_SIZE)
+      reservoir = _SampleSet(cls._MAX_PERCENTILE_SIZE)
       cls.VARZ_DATA[metric][source] = reservoir
     reservoir.Sample(value)
 
@@ -259,10 +261,10 @@ class VarzAggregator(object):
         data = varz[metric][source]
         if key not in metric_agg:
           metric_agg[key] = VarzAggregator._Agg()
-          if isinstance(data, _Reservoir):
+          if isinstance(data, _SampleSet):
             metric_agg[key].work = []
 
-        if isinstance(data, _Reservoir):
+        if isinstance(data, _SampleSet):
           metric_agg[key].work.append(data)
         else:
           metric_agg[key].work += data

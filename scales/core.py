@@ -204,6 +204,10 @@ class Scales(object):
       self._stack.append(sink_params)
       return self
 
+    def InsertSink(self, idx, sink_params):
+      self._stack.insert(idx, sink_params)
+      return self
+
     def _Replace(self, sink_params, predicate):
       replace_idx = next((i for i, n in enumerate(self._stack)
                           if predicate(n)), -1)

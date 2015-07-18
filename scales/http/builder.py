@@ -21,6 +21,13 @@ class _HttpIface(object):
     """
     pass
 
+  def Put(self, url, **kwargs):
+    """Issue an HTTP PUT to url.
+
+    kwargs aligns with arguments to requests, although timeout is ignored.
+    """
+    pass
+
 
 class Http(object):
   @staticmethod
