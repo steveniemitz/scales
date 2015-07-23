@@ -6,9 +6,12 @@ import functools
 import itertools
 import math
 import random
+import socket
 import time
 
 import gevent
+
+from .timer_queue import LOW_RESOLUTION_TIME_SOURCE
 
 class VarzType(object):
   Gauge = 1
@@ -145,7 +148,7 @@ class VarzBase(object):
     return self._VARZ[item]
 
 class _SampleSet(object):
-  __slots__ = ('data', 'i', 'p', 'max_size')
+  __slots__ = ('data', 'i', 'p', 'max_size', 'last_update')
 
   def __init__(self, max_size, data=None, p=.1):
     data = data or []
@@ -153,14 +156,17 @@ class _SampleSet(object):
     self.i = len(data)
     self.p = p
     self.max_size = max_size
+    self.last_update = 0
 
   def Sample(self, value):
     if self.i < self.max_size:
       self.data.append(value)
+      self.last_update = LOW_RESOLUTION_TIME_SOURCE.now
     else:
       j = random.random()
       if j < self.p:
         self.data.append(value)
+        self.last_update = LOW_RESOLUTION_TIME_SOURCE.now
     self.i += 1
 
 
@@ -196,6 +202,8 @@ class VarzReceiver(object):
 
 class VarzAggregator(object):
   """An aggregator that rolls metrics up to the service level."""
+  MAX_AGG_AGE = 5 * 60
+
   class _Agg(object):
     __slots__ = 'total', 'count', 'work'
     def __init__(self):
@@ -249,6 +257,7 @@ class VarzAggregator(object):
       key_selector = lambda k: k[1]
 
     agg = defaultdict(dict)
+    now = LOW_RESOLUTION_TIME_SOURCE.now
     for metric in varz.keys():
       metric_info = metrics.get(metric, None)
       if not metric_info:
@@ -265,10 +274,12 @@ class VarzAggregator(object):
             metric_agg[key].work = []
 
         if isinstance(data, _SampleSet):
-          metric_agg[key].work.append(data)
+          if (now - data.last_update) < VarzAggregator.MAX_AGG_AGE:
+            metric_agg[key].work.append(data)
+            metric_agg[key].count += 1
         else:
           metric_agg[key].work += data
-        metric_agg[key].count += 1
+          metric_agg[key].count += 1
 
       if varz_type in (VarzType.AggregateTimer, VarzType.Counter,
                        VarzType.Gauge, VarzType.Rate):
@@ -276,10 +287,13 @@ class VarzAggregator(object):
           source_agg.total = source_agg.work
       elif varz_type in (VarzType.AverageTimer, VarzType.AverageRate):
         for source_agg in metric_agg.values():
-          pct_sample = 1.0 / source_agg.count
-          values = [VarzAggregator._Downsample(v.data, int(len(v.data) * pct_sample))
-                    for v in source_agg.work]
-          values = sorted(itertools.chain(*values))
+          if source_agg.count > 0:
+            pct_sample = 1.0 / source_agg.count
+            values = [VarzAggregator._Downsample(v.data, int(len(v.data) * pct_sample))
+                      for v in source_agg.work]
+            values = sorted(itertools.chain(*values))
+          else:
+            values = []
           source_agg.total = [
             VarzAggregator.CalculatePercentile(values, pct)
             for pct in VarzReceiver.VARZ_PERCENTILES
