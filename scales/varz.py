@@ -346,6 +346,12 @@ class VarzSocketWrapper(object):
   def open(self):
     with self._varz.open_latency.Measure():
       self._socket.open()
+
+    if self._socket.handle:
+      # Disabling nagling (enabling TCP_NODELAY) causes the kernel to not buffer
+      # small writes for up to 40 (implementation dependent)ms.  This improves
+      # request latency for small requests.
+      self._socket.handle.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
     self._is_open = True
     self._varz.connects()
     self._varz.num_connections(1)
