@@ -109,8 +109,6 @@ class VarzMeta(type):
       dct[metric_suffix] = varz
     return super(VarzMeta, mcs).__new__(mcs, name, bases, dct)
 
-  def __init__(cls, name, bases, dct):
-    super(VarzMeta, cls).__init__(name, bases, dct)
 
 class VarzBase(object):
   """A helper class to create a set of Varz.
