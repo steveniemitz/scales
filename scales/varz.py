@@ -85,11 +85,14 @@ class VarzTimerBase(VarzMetric):
   """A specialization of VarzMetric that also includes a contextmanager
   to time blocks of code."""
   @contextmanager
-  def Measure(self):
+  def Measure(self, source=None):
     start_time = time.time()
     yield
     end_time = time.time()
-    self(end_time - start_time)
+    if source:
+      self(source, end_time - start_time)
+    else:
+      self(end_time - start_time)
 
 class AverageTimer(VarzTimerBase): VARZ_TYPE = VarzType.AverageTimer
 class AggregateTimer(VarzTimerBase): VARZ_TYPE = VarzType.AggregateTimer
@@ -106,6 +109,8 @@ class VarzMeta(type):
       dct[metric_suffix] = varz
     return super(VarzMeta, mcs).__new__(mcs, name, bases, dct)
 
+  def __init__(cls, name, bases, dct):
+    super(VarzMeta, cls).__init__(name, bases, dct)
 
 class VarzBase(object):
   """A helper class to create a set of Varz.
@@ -388,3 +393,48 @@ class VarzSocketWrapper(object):
         raise EOFError()
     self._varz.bytes_recv(sz)
     return buff
+
+
+class MonoClock(object):
+  """A clock whose value is guaranteed to always be increasing.
+  Clock skew is compensated.
+  """
+  def __init__(self):
+    self._last = time.time()
+
+  def Sample(self):
+    """Return the current time, as reported by time.time(), as long as it has
+    increased since the last sample."""
+    now = time.time()
+    if now - self._last > 0:
+      self._last = now
+    return self._last
+
+
+class Ema(object):
+  """Calculate an exponential moving average over a window."""
+  def __init__(self, window):
+    """Args:
+      window - The smoothing window, in seconds, to calculate the EMA over.
+    """
+    self._window = window
+    self._time = -1
+    self._ema = 0.0
+
+  def Update(self, ts, sample):
+    """Update the EMA with a new sample
+    Args:
+      ts - The timestamp, in seconds.
+      sample - The sampled value.
+    Returns:
+      The current EMA after being updated with the sample.
+    """
+    if self._time == -1:
+      self._time = ts
+      self._ema = float(sample)
+    else:
+      delta = ts - self._time
+      self._time = ts
+      window = 0 if self._window == 0 else math.exp(-float(delta) / self._window)
+      self._ema = (sample * (1-window)) + (self._ema * window)
+    return self._ema
