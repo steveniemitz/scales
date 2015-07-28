@@ -10,9 +10,7 @@ The load average is essentially the average number of concurrent requests each
 node in the balancer is handling.
 """
 
-import math
 import random
-import time
 
 from .heap import HeapBalancerSink
 from ..async import AsyncResult
@@ -20,54 +18,12 @@ from ..constants import (ChannelState, SinkProperties, SinkRole)
 from ..sink import SinkProvider
 from ..timer_queue import LOW_RESOLUTION_TIMER_QUEUE, LOW_RESOLUTION_TIME_SOURCE
 from ..varz import (
+  Ema,
   Gauge,
+  MonoClock,
   SourceType,
   VarzBase
 )
-
-class MonoClock(object):
-  """A clock whose value is guaranteed to always be increasing.
-  Clock skew is compensated.
-  """
-  def __init__(self):
-    self._last = time.time()
-
-  def Sample(self):
-    """Return the current time, as reported by time.time(), as long as it has
-    increased since the last sample."""
-    now = time.time()
-    if now - self._last > 0:
-      self._last = now
-    return self._last
-
-
-class Ema(object):
-  """Calculate an exponential moving average over a window."""
-  def __init__(self, window):
-    """Args:
-      window - The smoothing window, in seconds, to calculate the EMA over.
-    """
-    self._window = window
-    self._time = -1
-    self._ema = 0.0
-
-  def Update(self, ts, sample):
-    """Update the EMA with a new sample
-    Args:
-      ts - The timestamp, in seconds.
-      sample - The sampled value.
-    Returns:
-      The current EMA after being updated with the sample.
-    """
-    if self._time == -1:
-      self._time = ts
-      self._ema = float(sample)
-    else:
-      delta = ts - self._time
-      self._time = ts
-      window = 0 if self._window == 0 else math.exp(-float(delta) / self._window)
-      self._ema = (sample * (1-window)) + (self._ema * window)
-    return self._ema
 
 
 class ApertureBalancerSink(HeapBalancerSink):
@@ -79,7 +35,7 @@ class ApertureBalancerSink(HeapBalancerSink):
     active - The number of nodes active in the pool (in the aperture)
     load_average - The most recently calculated load average.
     """
-    _VARZ_BASE_NAME = 'scales.pool.ApertureBalancer'
+    _VARZ_BASE_NAME = 'scales.loadbalancer.Aperture'
     _VARZ_SOURCE_TYPE = SourceType.Service
     _VARZ = {
       'idle': Gauge,

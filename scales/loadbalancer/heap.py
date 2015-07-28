@@ -112,7 +112,7 @@ class HeapBalancerSink(LoadBalancerSink):
     no_members - The number of times the balancer served a failing requests
                  because there were no members in the pool.
     """
-    _VARZ_BASE_NAME = 'scales.pool.HeapBalancer'
+    _VARZ_BASE_NAME = 'scales.loadbalancer.Heap'
     _VARZ_SOURCE_TYPE = SourceType.Service
     _VARZ = {
       'size': Gauge,
