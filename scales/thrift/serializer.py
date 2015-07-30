@@ -1,3 +1,4 @@
+import inspect
 import sys
 
 from thrift.protocol.TBinaryProtocol import TBinaryProtocolAcceleratedFactory
@@ -27,7 +28,28 @@ class MessageSerializer(object):
     """
     self._protocol_factory = protocol_factory
     self._seq_id = 0
-    self._service_module = sys.modules[service_cls.__module__]
+    self._service_modules = [sys.modules[c.__module__]
+                             for c in inspect.getmro(service_cls)[:-1]]
+    if len(self._service_modules) == 1:
+      self._FindClass = self._FindClassNoInheritance
+    else:
+      self._attr_cache = {}
+      self._FindClass = self._FindClassInheritance
+
+  def _FindClassInheritance(self, name):
+    cls = self._attr_cache.get(name)
+    if cls:
+      return cls
+
+    for m in self._service_modules:
+      cls = getattr(m, name, None)
+      if cls:
+        self._attr_cache[name] = cls
+        return cls
+    return None
+
+  def _FindClassNoInheritance(self, name):
+    return getattr(self._service_modules[0], name, None)
 
   def SerializeThriftCall(self, msg, buf):
     """Serialize a MethodCallMessage to a stream
@@ -40,8 +62,10 @@ class MessageSerializer(object):
     thrift_buffer._buffer = buf
     protocol = self._protocol_factory.getProtocol(thrift_buffer)
     method, args, kwargs = msg.method, msg.args, msg.kwargs
-    is_one_way = not hasattr(self._service_module, '%s_result' % method)
-    args_cls = getattr(self._service_module, '%s_args' % method)
+    is_one_way = self._FindClass('%s_result' % method) is None
+    args_cls = self._FindClass('%s_args' % method)
+    if not args_cls:
+      raise AttributeError('Unable to find args class for method %s' % method)
 
     protocol.writeMessageBegin(
         msg.method,
@@ -73,7 +97,7 @@ class MessageSerializer(object):
       protocol.readMessageEnd()
       return MethodReturnMessage(error=x)
 
-    result_cls = getattr(self._service_module, '%s_result' % fn_name, None)
+    result_cls = self._FindClass('%s_result' % fn_name)
     if result_cls:
       result = result_cls()
       result.read(protocol)
