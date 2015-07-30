@@ -39,12 +39,14 @@ class LoadBalancerSink(ClientMessageSink):
     self._init_done.set()
     super(LoadBalancerSink, self).__init__()
 
-  def _OnServersChanged(self, endpoint, channel_factory, added):
+  def _OnServersChanged(self, instance, channel_factory, added):
     """Overridable by child classes.  Invoked when servers in the server set are
     added or removed.
 
     Args:
       instance - The server set member being added or removed.
+      channel_factory - A callable suitable for creating a channel factory for
+                        the new instance.
       added - True if the instance is being added, False if it's being removed.
     """
     pass
@@ -63,7 +65,7 @@ class LoadBalancerSink(ClientMessageSink):
       self._servers[instance.service_endpoint] = channel_factory
       self._log.info("Instance %s joined (%d members)" % (
           instance.service_endpoint, len(self._servers)))
-      self._OnServersChanged(instance.service_endpoint, channel_factory, True)
+      self._OnServersChanged(instance, channel_factory, True)
 
   def __RemoveServer(self, instance):
     """Removes a server from the load balancer.
@@ -71,8 +73,8 @@ class LoadBalancerSink(ClientMessageSink):
     Args:
       instance - A Member object to be removed from the pool.
     """
-    channel_factory = self._servers.pop(instance.service_endpoint, None)
-    self._OnServersChanged(instance.service_endpoint, channel_factory, False)
+    channel_factory = self._servers.pop(instance, None)
+    self._OnServersChanged(instance, channel_factory, False)
 
   def __OnServerSetJoin(self, instance):
     """Invoked when an instance joins the server set.

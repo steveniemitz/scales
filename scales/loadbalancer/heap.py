@@ -28,9 +28,13 @@ from ..constants import (
   ChannelState,
   Int,
   MessageProperties,
-  SinkProperties
+  SinkProperties,
+  SinkRole
 )
-from ..sink import FailingMessageSink
+from ..sink import (
+  FailingMessageSink,
+  SinkProvider
+)
 from ..varz import (
   Counter,
   Gauge,
@@ -147,6 +151,7 @@ class HeapBalancerSink(LoadBalancerSink):
     self._downq = None
     self._size = 0
     self._open = False
+    self._open_result = None
     self._heap_lock = RLock()
     service_name = global_properties[SinkProperties.Label]
     self.__varz = self.HeapVarz(service_name)
@@ -324,14 +329,15 @@ class HeapBalancerSink(LoadBalancerSink):
       node.channel.Close()
     return True
 
-  def _OnServersChanged(self, endpoint, channel_factory, added):
+  def _OnServersChanged(self, instance, channel_factory, added):
     """Invoked by the LoadBalancer when an endpoint joins or leaves the
     server set.
 
     Args:
-      endpoint - A tuple of (endpoint, sink).
+      instance - An instance of the server set
       added - True if the endpoint is being added, False if being removed.
     """
+    endpoint = instance.service_endpoint
     if added:
       self._AddSink(endpoint, channel_factory)
     else:
@@ -350,11 +356,13 @@ class HeapBalancerSink(LoadBalancerSink):
   def Open(self):
     """Open the sink and all underlying nodes."""
     self._open = True
-    if self._size > 0:
-      # Ignore the first sink, it's the FailingChannelSink.
-      return AsyncResult.WhenAny([self._OpenNode(n) for n in self._heap[1:]])
-    else:
-      return AsyncResult.Complete()
+    if not self._open_result:
+      if self._size > 0:
+        # Ignore the first sink, it's the FailingChannelSink.
+        self._open_result = AsyncResult.WhenAny([self._OpenNode(n) for n in self._heap[1:]])
+      else:
+        self._open_result = AsyncResult.Complete()
+    return self._open_result
 
   def Close(self):
     """Close the sink and all underlying nodes immediately."""
@@ -364,3 +372,8 @@ class HeapBalancerSink(LoadBalancerSink):
   @property
   def state(self):
     return max([n.channel.state for n in self._heap])
+
+HeapBalancerSink.Builder = SinkProvider(
+  HeapBalancerSink,
+  SinkRole.LoadBalancer,
+  server_set_provider=None)

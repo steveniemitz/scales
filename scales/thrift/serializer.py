@@ -29,7 +29,8 @@ class MessageSerializer(object):
     self._protocol_factory = protocol_factory
     self._seq_id = 0
     self._service_modules = [sys.modules[c.__module__]
-                             for c in inspect.getmro(service_cls)[:-1]]
+                             for c in inspect.getmro(service_cls)
+                             if not c is object]
     if len(self._service_modules) == 1:
       self._FindClass = self._FindClassNoInheritance
     else:

@@ -19,6 +19,7 @@ class ThriftTestCase(unittest.TestCase):
       ret = self.client.passMessage(ttypes.Message('hi!'))
       return ret.content == 'hi! server!'
     except:
+      raise
       return False
 
   def test(self):

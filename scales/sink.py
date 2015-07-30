@@ -280,6 +280,14 @@ class SinkProviderBase(object):
   def sink_class(self):
     pass
 
+  def Clone(self, **kwargs):
+    """Creates a copy of this sink_provider with new properties"""
+    new_props = self.sink_properties.__dict__.copy()
+    new_props.update(kwargs)
+    new_provider = type(self)(**new_props)
+    new_provider.next_provider = self.next_provider
+    return new_provider
+
 
 def SinkProvider(sink_cls, role=None, **defaults):
   """Factory for creating simple sink providers.
