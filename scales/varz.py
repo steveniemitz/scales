@@ -325,7 +325,7 @@ class VarzSocketWrapper(object):
       'bytes_sent': Rate,
       'num_connections': Counter,
       'tests_failed': Counter,
-      'connects': Counter,
+      'connects': Rate,
       'open_latency': AverageTimer
     }
 
@@ -417,7 +417,7 @@ class Ema(object):
     """
     self._window = window
     self._time = -1
-    self._ema = 0.0
+    self.value = 0.0
 
   def Update(self, ts, sample):
     """Update the EMA with a new sample
@@ -429,10 +429,10 @@ class Ema(object):
     """
     if self._time == -1:
       self._time = ts
-      self._ema = float(sample)
+      self.value = float(sample)
     else:
       delta = ts - self._time
       self._time = ts
       window = 0 if self._window == 0 else math.exp(-float(delta) / self._window)
-      self._ema = (sample * (1-window)) + (self._ema * window)
-    return self._ema
+      self.value = (sample * (1-window)) + (self.value * window)
+    return self.value

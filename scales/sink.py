@@ -24,7 +24,7 @@ from .message import (
 )
 from .timer_queue import GLOBAL_TIMER_QUEUE
 from .varz import (
-  Counter,
+  Rate,
   VarzBase
 )
 
@@ -206,7 +206,7 @@ class ClientTimeoutSink(ClientMessageSink):
   class Varz(VarzBase):
     _VARZ_BASE_NAME = 'scales.TimeoutSink'
     _VARZ = {
-      'timeouts': Counter
+      'timeouts': Rate
     }
 
   def __init__(self, next_provider, sink_properties, global_properties):

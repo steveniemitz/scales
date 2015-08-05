@@ -25,9 +25,9 @@ from ..sink import (
 )
 from ..thrift.socket import TSocket
 from ..varz import (
-  Counter,
   AggregateTimer,
   AverageTimer,
+  Rate,
   SourceType,
   VarzBase,
   VarzSocketWrapper
@@ -63,8 +63,8 @@ class SocketTransportSink(ClientMessageSink):
     _VARZ_BASE_NAME = 'scales.thrift.SocketTransportSink'
     _VARZ_SOURCE_TYPE = SourceType.ServiceAndEndpoint
     _VARZ = {
-      'messages_sent': Counter,
-      'messages_recv': Counter,
+      'messages_sent': Rate,
+      'messages_recv': Rate,
       'send_time': AggregateTimer,
       'recv_time': AggregateTimer,
       'send_latency': AverageTimer,

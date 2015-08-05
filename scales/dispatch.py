@@ -17,7 +17,7 @@ from .sink import (
   ClientMessageSinkStack
 )
 from .varz import (
-  Counter,
+  Rate,
   SourceType,
   AverageTimer,
   VarzBase
@@ -44,9 +44,9 @@ class MessageDispatcher(ClientMessageSink):
     _VARZ_BASE_NAME = 'scales.MessageDispatcher'
     _VARZ_SOURCE_TYPE = SourceType.MethodAndService
     _VARZ = {
-      'dispatch_messages': Counter,
-      'success_messages': Counter,
-      'exception_messages': Counter,
+      'dispatch_messages': Rate,
+      'success_messages': Rate,
+      'exception_messages': Rate,
       'request_latency': AverageTimer
     }
 

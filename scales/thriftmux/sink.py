@@ -28,6 +28,7 @@ from ..varz import (
   AverageTimer,
   Counter,
   Gauge,
+  Rate,
   SourceType,
   VarzBase
 )
@@ -121,8 +122,8 @@ class SocketTransportSink(ClientMessageSink):
     _VARZ_BASE_NAME = 'scales.thriftmux.SocketTransportSink'
     _VARZ_SOURCE_TYPE = SourceType.ServiceAndEndpoint
     _VARZ = {
-      'messages_sent': Counter,
-      'messages_recv': Counter,
+      'messages_sent': Rate,
+      'messages_recv': Rate,
       'active': Gauge,
       'send_queue_size': Gauge,
       'send_time': AggregateTimer,
