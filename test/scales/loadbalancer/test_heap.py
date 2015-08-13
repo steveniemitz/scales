@@ -21,16 +21,16 @@ class HeapBalancerTestCase(LoadBalancerTestCase):
   def testHeapMaintainsLeastLoad(self):
     hs = self.sink
     self._submitTestMessage()
-    self.assertEqual(hs._heap[1].load, hs.Zero)
+    self.assertEqual(hs._heap[1].load, hs.Idle)
     self._completeTestMessage()
     self.assertEqual(self.return_message, self.MSG_SENTINEL)
 
   def testHeapTracksLoad(self):
     self._submitTestMessage()
-    self.assertTrue(any([n.load == self.sink.Zero + 1
+    self.assertTrue(any([n.load == self.sink.Idle + 1
                          for n in self.sink._heap[1:]]))
     self._completeTestMessage()
-    self.assertTrue(all([n.load == self.sink.Zero
+    self.assertTrue(all([n.load == self.sink.Idle
                          for n in self.sink._heap[1:]]))
 
   def testHeapRemovesNode(self):
@@ -48,7 +48,7 @@ class HeapBalancerTestCase(LoadBalancerTestCase):
     # -1 means it was removed from the heap
     self.assertEqual(loaded_node.index, -1)
     # It should still have load
-    self.assertEqual(loaded_node.load, self.sink.Zero + 1)
+    self.assertEqual(loaded_node.load, self.sink.Idle + 1)
     # It shouldn't be in the heap anymore
     self.assertTrue(all(n.channel.endpoint.port != loaded_ep.port for n in self.sink._heap[1:]))
     return loaded_node

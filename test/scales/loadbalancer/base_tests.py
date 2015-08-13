@@ -4,7 +4,7 @@ from test.scales.util.base import SinkTestCase
 
 class LoadBalancerTestCase(SinkTestCase):
   def _getLoadedNode(self):
-    return next(n for n in self.sink._heap[1:] if n.load > self.sink.Zero)
+    return next(n for n in self.sink._heap[1:] if n.load > self.sink.Idle)
 
   def customize(self):
     ss_provider = MockServerSetProvider()

@@ -2,13 +2,14 @@ import unittest
 
 from scales.constants import SinkProperties
 from scales.pool.singleton import SingletonPoolSink
+from scales.loadbalancer.zookeeper import Endpoint
 from test.scales.util.base import SinkTestCase
 
 class SingletonPoolTestCast(SinkTestCase):
   SINK_CLS = SingletonPoolSink
 
   def customize(self):
-    self.global_properties[SinkProperties.Endpoint] = 'localhost'
+    self.global_properties[SinkProperties.Endpoint] = Endpoint('localhost', 1234)
 
   def testSingletonPoolFowardsMessage(self):
     self._submitTestMessage()

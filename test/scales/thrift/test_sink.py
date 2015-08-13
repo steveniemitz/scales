@@ -44,6 +44,7 @@ class ThriftSinkTestCase(SinkTestCase):
     # Yield
     if do_yield:
       gevent.sleep()
+      gevent.sleep()
     return read_data, write_data, sink, sink_stack
 
   def testBasicTransaction(self):
@@ -71,6 +72,7 @@ class ThriftSinkTestCase(SinkTestCase):
     self.assertIsNotNone(sink_stack_2.return_message)
     # The second request should fail immediately w/ a concurrency violation
     self.assertIsInstance(sink_stack_2.return_message.error, ChannelConcurrencyError)
+    gevent.sleep(0)
     gevent.sleep(0)
     # The first request should succeed.
     self.assertEqual(sink_stack.return_stream.getvalue(), response)
