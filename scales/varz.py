@@ -159,7 +159,7 @@ class _SampleSet(object):
     self.i = len(data)
     self.p = p
     self.max_size = max_size
-    self.last_update = 0
+    self.last_update = LOW_RESOLUTION_TIME_SOURCE.now
 
   def Sample(self, value):
     if self.i < self.max_size:

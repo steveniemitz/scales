@@ -3,7 +3,7 @@ import random
 import unittest
 
 from scales.varz import (
-  _Reservoir,
+  _SampleSet,
   SourceType,
   VarzAggregator,
   VarzReceiver,
@@ -34,16 +34,16 @@ class VarzTestCase(unittest.TestCase):
   def _getSampleRateData(self):
     test_varz = {
       'metric1': {
-        (None, 'service1', 'enpoint1'): _Reservoir([1,2]),
-        (None, 'service1', 'enpoint2'): _Reservoir([2,3])
+        (None, 'service1', 'enpoint1'): _SampleSet(2, [1,2]),
+        (None, 'service1', 'enpoint2'): _SampleSet(2, [2,3])
       },
       'metric2': {
-        (None, 'service1', 'endpoint1'): _Reservoir([1,2]),
-        (None, 'service2', 'endpoint1'): _Reservoir([2,3])
+        (None, 'service1', 'endpoint1'): _SampleSet(2, [1,2]),
+        (None, 'service2', 'endpoint1'): _SampleSet(2, [2,3])
       },
       'metric3': {
-        ('method1', 'service1', None): _Reservoir([1,2]),
-        ('method2', 'service1', None): _Reservoir([2,3]),
+        ('method1', 'service1', None): _SampleSet(2, [1,2]),
+        ('method2', 'service1', None): _SampleSet(2, [2,3]),
       }
     }
     return test_varz
@@ -102,12 +102,12 @@ class VarzTestCase(unittest.TestCase):
     VarzReceiver.RegisterMetric(metric, VarzType.AverageTimer, SourceType.Service)
     random.seed(1)
     for n in xrange(10000):
-      VarzReceiver.RecordPercentileSample(source, metric, random.randint(0, 100))
+      VarzReceiver.RecordPercentileSample(source, metric, float(random.randint(0, 100)))
 
     aggs = VarzAggregator.Aggregate(VarzReceiver.VARZ_DATA, VarzReceiver.VARZ_METRICS)
     self.assertEqual(
       _round(aggs[metric]['test'].total, 2),
-      [49.07, 48.0, 90.0, 99.0, 100.0, 100.0])
+      [50.25, 50, 92.0, 100.0, 100.0, 100.0])
 
 if __name__ == '__main__':
   unittest.main()
