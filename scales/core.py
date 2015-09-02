@@ -18,7 +18,10 @@ class _ProxyBase(object):
     super(_ProxyBase, self).__init__()
 
   def __del__(self):
-    self.DispatcherClose()
+    try:
+      self.DispatcherClose()
+    except:
+      pass
 
   def DispatcherOpen(self):
     self._dispatcher.Open()

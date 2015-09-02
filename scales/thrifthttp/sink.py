@@ -30,6 +30,9 @@ class _ResponseReader(TTransportBase):
     self._varz.bytes_recv(len(data))
     self._rbuf = StringIO(data)
     return self._rbuf.read(sz)
+
+  def getvalue(self):
+    return self._stream.read(decode_content=True)
   # TODO: Implement CReadableTransport
 
 
