@@ -3,20 +3,15 @@ from __future__ import absolute_import
 from thrift.protocol.TJSONProtocol import TJSONProtocol, JTYPES, CTYPES
 from thrift.Thrift import TType
 
-import json
-
 try:
   from cStringIO import StringIO
 except ImportError:
   from StringIO import StringIO
 
 try:
-  import cjson
-  json_decode = cjson.decode
+  import simplejson as json
 except ImportError:
-  json_decode = json.loads
-
-json_encode = json.dump
+  import json
 
 class TFastJSONProtocol(TJSONProtocol):
   class InitContext(object):
@@ -174,7 +169,7 @@ class TFastJSONProtocol(TJSONProtocol):
     else:
       js = self._readTransport()
 
-    message = json_decode(js)
+    message = json.loads(js)
     self._ctx = self.InitContext(message)
     self._stack = []
     return TJSONProtocol.readMessageBegin(self)
@@ -210,7 +205,7 @@ class TFastJSONProtocol(TJSONProtocol):
     TJSONProtocol.writeMessageEnd(self)
     # The thrift JSON parser is very sensitive, it can't handle spaces after
     # commas or colons <table flip emoji>
-    json_encode(self._ctx.get_buffer(), self.trans, separators=(',',':'))
+    json.dump(self._ctx.get_buffer(), self.trans, separators=(',',':'))
 
   def writeJSONArrayStart(self):
     self._StartWriteContext(self.ArrayContext, [])
