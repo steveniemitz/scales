@@ -161,7 +161,8 @@ class ServerSet(object):
     def is_blocking(self):
       return self._count != 0
 
-  def __init__(self, zk, zk_path, on_join=None, on_leave=None, member_filter=None):
+  def __init__(self, zk, zk_path, on_join=None, on_leave=None,
+      member_filter=None, member_factory=Member.from_node):
     """Initialize the ServerSet, ensuring the zk_path exists.
 
     Args:
@@ -170,6 +171,8 @@ class ServerSet(object):
                 it will be watched for creation.
       on_join - An optional function to call when members join the node.
       on_leave - An optional function to call when members leave the node.
+      member_filter - An optional function to filter children from ZK.
+      member_factory - A function to create a Member object from a znode.
     """
     def noop(*args, **kwargs): pass
     def true(*args, **kwargs): return True
@@ -192,6 +195,7 @@ class ServerSet(object):
     self._watching = False
     self._cb_blocker = self._CallbackBlocker()
     self._member_filter = member_filter or true
+    self._member_factory = member_factory
     gevent.spawn(self._notification_worker)
 
     if on_join or on_leave:
@@ -232,7 +236,7 @@ class ServerSet(object):
 
   def _safe_zk_node_to_member(self, node):
     try:
-      return Member.from_node(node, self._get_info(node))
+      return self._member_factory(node, self._get_info(node))
     except NoNodeError:
       # Its possible for the ZK node to be removed between getting it
       # from the list and querying it, if so, just skip it.
@@ -288,12 +292,6 @@ class ServerSet(object):
         self._log.debug("Raising notifications for %i members joining and %i members leaving."
                  % (len(new_nodes), len(removed_nodes)))
 
-        for m in new_members:
-          try:
-            self._on_join(m)
-          except Exception:
-            self._log.exception('Error in OnJoin callback.')
-
         for m in removed_nodes:
           removed_member = self._members.pop(m, None)
           if removed_member:
@@ -303,6 +301,13 @@ class ServerSet(object):
               self._log.exception('Error in OnLeave callback.')
           else:
             self._log.warn('Member %s was not found in cached set' % str(m))
+
+        for m in new_members:
+          try:
+            self._on_join(m)
+          except Exception:
+            self._log.exception('Error in OnJoin callback.')
+
       except Exception:
         self._log.exception('Error in notification worker.')
 
