@@ -1,7 +1,7 @@
 from __future__ import absolute_import
 
 from contextlib import contextmanager
-from collections import defaultdict, deque
+from collections import defaultdict, deque, namedtuple
 import functools
 import itertools
 import math
@@ -21,13 +21,32 @@ class VarzType(object):
   AverageTimer = 5
   AverageRate = 6
 
-class SourceType(object):
-  Method = 1
-  Service = 2
-  Endpoint = 4
+class Source(object):
+  __slots__ = "method", "service", "endpoint", "client_id"
+  def __init__(self, method=None, service=None, endpoint=None, client_id=None):
+    self.method = method
+    self.service = service
+    self.endpoint = endpoint
+    self.client_id = client_id
 
-  ServiceAndEndpoint = Service | Endpoint
-  MethodAndService = Method | Service
+  def to_tuple(self):
+    return (self.method, self.service, self.endpoint, self.client_id)
+
+  def to_dict(self):
+    return {
+      "method": self.method,
+      "service": self.service,
+      "endpoint": self.endpoint,
+      "client_id": self.client_id,
+    }
+
+  def __cmp__(self, other):
+    if not isinstance(other, Source):
+      return -1
+    return cmp(self.to_tuple(), other.to_tuple())
+
+  def __hash__(self):
+    return hash((self.method, self.service, self.endpoint, self.client_id))
 
 class VarzMetric(object):
   """An object that can be used to record specific varz."""
@@ -47,7 +66,6 @@ class VarzMetric(object):
     """
     self._metric = metric
     self._source = source
-
     if self.VARZ_TYPE == VarzType.Gauge:
       self._fn = VarzReceiver.SetVarz
     elif self.VARZ_TYPE in (VarzType.AverageTimer, VarzType.AverageRate):
@@ -71,9 +89,8 @@ class VarzMetric(object):
     Returns:
       A VarzMetric of the same type.
     """
-    if not isinstance(source, tuple) or len(source) != 3:
-      raise Exception("Source must be a 3-tuple")
-
+    if not isinstance(source, Source):
+      raise ValueError("Source must be a source object", type(source))
     return type(self)(self._metric, source)
 
 class Gauge(VarzMetric): VARZ_TYPE = VarzType.Gauge
@@ -100,32 +117,35 @@ class AggregateTimer(VarzTimerBase): VARZ_TYPE = VarzType.AggregateTimer
 class VarzMeta(type):
   def __new__(mcs, name, bases, dct):
     base_name = dct['_VARZ_BASE_NAME']
-    source_type = dct.get('_VARZ_SOURCE_TYPE', SourceType.Service)
     for metric_suffix, varz_cls in dct['_VARZ'].iteritems():
       metric_name = '%s.%s' % (base_name, metric_suffix)
-      VarzReceiver.RegisterMetric(metric_name, varz_cls.VARZ_TYPE, source_type)
+      VarzReceiver.RegisterMetric(metric_name, varz_cls.VARZ_TYPE)
       varz = varz_cls(metric_name, None)
       dct['_VARZ'][metric_suffix] = varz
       dct[metric_suffix] = varz
     return super(VarzMeta, mcs).__new__(mcs, name, bases, dct)
 
+def VerifySource(source):
+  if not isinstance(source, Source):
+    raise ValueError("InvalidSource", source)
+  return source
 
 class VarzBase(object):
   """A helper class to create a set of Varz.
 
-  Inheritors should set _VARZ_BASE_NAME as well as _VARZ_SOURCE_TYPE.  Once done,
-  the Varz object can be instantiated with a source, and then metrics invoked as
-  attributes on the object.
+  Inheritors should set _VARZ_BASE_NAME.  Once done, the Varz object can be
+  instantiated with a source, and then metrics invoked as attributes on the
+  object.
 
   For example:
     class Varz(VarzBase):
-    _VARZ_BASE_NAME = 'scales.example.varz'
-    _VARZ = {
-      'a_counter': Counter,
-      'a_gauge': Gauge
-    }
+      _VARZ_BASE_NAME = 'scales.example.varz'
+      _VARZ = {
+        'a_counter': Counter,
+        'a_gauge': Gauge
+      }
 
-    my_varz = Varz('source1')
+    my_varz = Varz(Source(service='my_service'))
     my_varz.a_counter()
     my_varz.a_gauge(5)
   """
@@ -133,17 +153,9 @@ class VarzBase(object):
   __metaclass__ = VarzMeta
   _VARZ = {}
   _VARZ_BASE_NAME = None
-  _VARZ_SOURCE_TYPE = SourceType.Service
 
   def __init__(self, source):
-    method, service, endpoint = None, None, None
-    if self._VARZ_SOURCE_TYPE == SourceType.Service:
-      service = source
-    elif self._VARZ_SOURCE_TYPE == SourceType.MethodAndService:
-      method, service = source
-    elif self._VARZ_SOURCE_TYPE == SourceType.ServiceAndEndpoint:
-      service, endpoint = source
-    source = method, service, endpoint
+    source = VerifySource(source)
     for k, v in self._VARZ.iteritems():
       setattr(self, k, v.ForSource(source))
 
@@ -172,7 +184,6 @@ class _SampleSet(object):
         self.last_update = LOW_RESOLUTION_TIME_SOURCE.now
     self.i += 1
 
-
 class VarzReceiver(object):
   """A stub class to receive varz from Scales."""
   VARZ_METRICS = {}
@@ -182,26 +193,32 @@ class VarzReceiver(object):
   _MAX_PERCENTILE_SIZE = 1000
 
   @staticmethod
-  def RegisterMetric(metric, varz_type, source_type):
-    VarzReceiver.VARZ_METRICS[metric] = (varz_type, source_type)
+  def RegisterMetric(metric, varz_type):
+    VarzReceiver.VARZ_METRICS[metric] = varz_type
 
   @staticmethod
   def IncrementVarz(source, metric, amount=1):
     """Increment (source, metric) by amount"""
-    VarzReceiver.VARZ_DATA[metric][source] += amount
+    VarzReceiver.VARZ_DATA[metric][VerifySource(source)] += amount
 
   @staticmethod
   def SetVarz(source, metric, value):
     """Set (source, metric) to value"""
-    VarzReceiver.VARZ_DATA[metric][source] = value
+    VarzReceiver.VARZ_DATA[metric][VerifySource(source)] = value
 
   @classmethod
   def RecordPercentileSample(cls, source, metric, value):
+    source = VerifySource(source)
     reservoir = cls.VARZ_DATA[metric][source]
     if reservoir == 0:
       reservoir = _SampleSet(cls._MAX_PERCENTILE_SIZE)
       cls.VARZ_DATA[metric][source] = reservoir
     reservoir.Sample(value)
+
+def DefaultKeySelector(k):
+  """A key selector to use for Aggregate."""
+  VerifySource(k)
+  return k.service, k.client_id
 
 class VarzAggregator(object):
   """An aggregator that rolls metrics up to the service level."""
@@ -251,21 +268,21 @@ class VarzAggregator(object):
       varz - The varz dictionary to aggregate, typically VarzReceiver.VARZ_DATA.
       metrics - The metric metadata dictionary, typically VarzReceiver.VARZ_METRICS
       key_selector - A function to select the key to aggregate by given a
-                     (endpoint, service, host) tuple.  By default this returns
+                     (endpoint, service, host, client) tuple.  By default this returns
                      the service.
     Returns:
       A dictionary of metric -> service -> aggregate.
     """
     if not key_selector:
-      key_selector = lambda k: k[1]
+      key_selector = DefaultKeySelector
 
     agg = defaultdict(dict)
     now = LOW_RESOLUTION_TIME_SOURCE.now
     for metric in varz.keys():
-      metric_info = metrics.get(metric, None)
-      if not metric_info:
+      if metric not in metrics:
         continue
-      varz_type, source_type = metric_info
+      varz_type = metrics[metric]
+      assert isinstance(varz_type, int), varz_type
       metric_agg = agg[metric]
       gevent.sleep(0)
       for source in varz[metric].keys():
@@ -283,7 +300,6 @@ class VarzAggregator(object):
         else:
           metric_agg[key].work += data
           metric_agg[key].count += 1
-
       if varz_type in (VarzType.AggregateTimer, VarzType.Counter,
                        VarzType.Gauge, VarzType.Rate):
         for source_agg in metric_agg.values():
@@ -312,14 +328,12 @@ class VarzAggregator(object):
 
     return agg
 
-
 class VarzSocketWrapper(object):
   """A wrapper for Thrift sockets that records various varz about the socket."""
   __slots__ = ('_socket', '_varz', '_is_open')
 
   class Varz(VarzBase):
     _VARZ_BASE_NAME = 'scales.socket'
-    _VARZ_SOURCE_TYPE = SourceType.ServiceAndEndpoint
     _VARZ = {
       'bytes_recv': Rate,
       'bytes_sent': Rate,
@@ -332,7 +346,7 @@ class VarzSocketWrapper(object):
   def __init__(self, socket, varz_tag):
     self._socket = socket
     self._is_open = self._socket.isOpen()
-    self._varz = self.Varz((varz_tag, '%s:%d' % (self.host, self.port)))
+    self._varz = self.Varz(Source(service=varz_tag, endpoint='%s:%d' % (self.host, self.port)))
 
   @property
   def host(self):

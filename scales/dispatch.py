@@ -18,7 +18,7 @@ from .sink import (
 )
 from .varz import (
   Rate,
-  SourceType,
+  Source,
   AverageTimer,
   VarzBase
 )
@@ -42,7 +42,6 @@ class MessageDispatcher(ClientMessageSink):
     request_latency - The average time taken to receive a response to a request.
     """
     _VARZ_BASE_NAME = 'scales.MessageDispatcher'
-    _VARZ_SOURCE_TYPE = SourceType.MethodAndService
     _VARZ = {
       'dispatch_messages': Rate,
       'success_messages': Rate,
@@ -121,7 +120,7 @@ class MessageDispatcher(ClientMessageSink):
       deadline = start_time + timeout - open_latency
       disp_msg.properties[Deadline.KEY] = deadline
 
-    source = method, self._name, None
+    source = Source(method=method, service=self._name)
     self.Varz.dispatch_messages(source) # pylint: disable=no-member
 
     ar = AsyncResult()
@@ -166,11 +165,12 @@ class MessageDispatcher(ClientMessageSink):
       msg - The reply message (a MethodReturnMessage).
     """
     source, start_time, ar, msg_props = context
-    method, service, endpoint = source
     endpoint = msg_props.get(MessageProperties.Endpoint, None)
     if endpoint and not isinstance(endpoint, str):
       endpoint = str(endpoint)
-    host_source = method, service, endpoint
+    host_source = Source(method=source.method,
+                         service=source.service,
+                         endpoint=endpoint)
     end_time = time.time()
     self.Varz.request_latency(host_source, end_time - start_time) # pylint: disable=no-member
     if isinstance(msg, MethodReturnMessage):

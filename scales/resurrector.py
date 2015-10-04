@@ -7,7 +7,7 @@ from gevent import GreenletExit
 from .constants import (ChannelState, SinkProperties)
 from .message import (FailedFastError, MethodReturnMessage)
 from .sink import (ClientMessageSink, SinkProvider)
-from .varz import (AggregateTimer, Counter, SourceType, VarzBase)
+from .varz import (AggregateTimer, Counter, Source, VarzBase)
 
 ROOT_LOG = logging.getLogger('scales.Resurrector')
 
@@ -21,7 +21,6 @@ class ResurrectorSink(ClientMessageSink):
 
   class Varz(VarzBase):
     _VARZ_BASE_NAME = 'scales.Resurrector'
-    _VARZ_SOURCE_TYPE = SourceType.ServiceAndEndpoint
     _VARZ = {
       'time_failed': AggregateTimer,
       'reconnect_attempts': Counter,
@@ -40,7 +39,8 @@ class ResurrectorSink(ClientMessageSink):
     self._initial_wait_interval = sink_properties.initial_wait_interval
     self._max_wait_interval = sink_properties.max_wait_interval
     self._backoff_exponent = sink_properties.backoff_exponent
-    self._varz = self.Varz((service, endpoint_source))
+    self._varz = self.Varz(Source(service=service,
+                                  endpoint=endpoint_source))
     super(ResurrectorSink, self).__init__()
 
   def AsyncProcessRequest(self, sink_stack, msg, stream, headers):

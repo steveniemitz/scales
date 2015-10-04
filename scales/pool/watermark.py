@@ -14,7 +14,7 @@ from ..sink import (
 from ..dispatch import ServiceClosedError
 from ..varz import (
   Gauge,
-  SourceType,
+  Source,
   VarzBase
 )
 
@@ -55,7 +55,6 @@ class WatermarkPoolSink(PoolSink):
     max_size - The configured high-watermark.
     """
     _VARZ_BASE_NAME = 'scales.pool.WatermarkPool'
-    _VARZ_SOURCE_TYPE = SourceType.ServiceAndEndpoint
     _VARZ = {
       'size': Gauge,
       'queue_size': Gauge
@@ -74,7 +73,8 @@ class WatermarkPoolSink(PoolSink):
     self._state = ChannelState.Idle
     socket_name = '%s:%s' % (endpoint.host, endpoint.port)
     self.endpoint = socket_name
-    self._varz = self.Varz((name, socket_name))
+    self._varz = self.Varz(Source(service=name,
+                                  endpoint=socket_name))
     self._log = self.ROOT_LOG.getChild('[%s.%s]' % (name, socket_name))
     super(WatermarkPoolSink, self).__init__(next_provider, global_properties)
 

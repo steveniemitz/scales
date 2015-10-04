@@ -29,7 +29,7 @@ from ..varz import (
   Counter,
   Gauge,
   Rate,
-  SourceType,
+  Source,
   VarzBase
 )
 from .serializer import (
@@ -49,7 +49,6 @@ class TagPool(object):
   POOL_LOGGER = ROOT_LOG.getChild('TagPool')
 
   class Varz(VarzBase):
-    _VARZ_SOURCE_TYPE = SourceType.ServiceAndEndpoint
     _VARZ_BASE_NAME = 'scales.thriftmux.TagPool'
     _VARZ = {
       'pool_exhausted': Counter,
@@ -60,7 +59,7 @@ class TagPool(object):
     self._set = set()
     self._next = 1
     self._max_tag = max_tag
-    self._varz = self.Varz((service, host))
+    self._varz = self.Varz(Source(service=service, endpoint=host))
     self._log = self.POOL_LOGGER.getChild('[%s.%s]' % (service, host))
 
   def get(self):
@@ -120,7 +119,6 @@ class SocketTransportSink(ClientMessageSink):
                         read response).
     """
     _VARZ_BASE_NAME = 'scales.thriftmux.SocketTransportSink'
-    _VARZ_SOURCE_TYPE = SourceType.ServiceAndEndpoint
     _VARZ = {
       'messages_sent': Rate,
       'messages_recv': Rate,
@@ -145,7 +143,8 @@ class SocketTransportSink(ClientMessageSink):
     self._socket_source = '%s:%d' % (self._socket.host, self._socket.port)
     self._service = service
     self._open_result = None
-    self._varz = self.Varz((self._service, self._socket_source))
+    self._varz = self.Varz(Source(service=self._service,
+                                  endpoint=self._socket_source))
 
   def _Init(self):
     self._tag_map = {}
@@ -453,7 +452,8 @@ class ThriftMuxMessageSerializerSink(ClientMessageSink):
     super(ThriftMuxMessageSerializerSink, self).__init__()
     self.next_sink = next_provider.CreateSink(global_properties)
     self._serializer = MessageSerializer(global_properties[SinkProperties.ServiceInterface])
-    self._varz = self.Varz(global_properties[SinkProperties.Label])
+    self._varz = self.Varz(Source(
+      service=global_properties[SinkProperties.Label]))
 
   @staticmethod
   def ReadHeader(stream):

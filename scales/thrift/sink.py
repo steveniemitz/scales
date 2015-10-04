@@ -28,7 +28,7 @@ from ..varz import (
   AggregateTimer,
   AverageTimer,
   Rate,
-  SourceType,
+  Source,
   VarzBase,
   VarzSocketWrapper
 )
@@ -61,7 +61,6 @@ class SocketTransportSink(ClientMessageSink):
     """
 
     _VARZ_BASE_NAME = 'scales.thrift.SocketTransportSink'
-    _VARZ_SOURCE_TYPE = SourceType.ServiceAndEndpoint
     _VARZ = {
       'messages_sent': Rate,
       'messages_recv': Rate,
@@ -77,7 +76,7 @@ class SocketTransportSink(ClientMessageSink):
     self._socket = socket
     self._state = ChannelState.Idle
     socket_source = '%s:%d' % (self._socket.host, self._socket.port)
-    self._varz = self.Varz((source, socket_source))
+    self._varz = self.Varz(Source(service=source, endpoint=socket_source))
     self._processing = None
     self._open_result = None
 

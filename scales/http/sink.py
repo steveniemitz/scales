@@ -9,12 +9,11 @@ from ..async import AsyncResult
 from ..constants import ChannelState, SinkProperties
 from ..sink import (ClientMessageSink, SinkProvider)
 from ..message import (Deadline, MethodReturnMessage, TimeoutError)
-from ..varz import VarzBase, Rate, SourceType
+from ..varz import VarzBase, Rate, Source
 
 class HttpTransportSinkBase(ClientMessageSink):
   class Varz(VarzBase):
     _VARZ_BASE_NAME = 'scales.http.HttpTransportSink'
-    _VARZ_SOURCE_TYPE = SourceType.ServiceAndEndpoint
     _VARZ = {
       'bytes_recv': Rate,
       'bytes_sent': Rate,
@@ -24,7 +23,7 @@ class HttpTransportSinkBase(ClientMessageSink):
     super(HttpTransportSinkBase, self).__init__()
     self._endpoint = global_properties[SinkProperties.Endpoint]
     name = global_properties[SinkProperties.Label]
-    self._varz = self.Varz((name, '%s:%d' % (self._endpoint.host, self._endpoint.port)))
+    self._varz = self.Varz(Source(service=name, endpoint='%s:%d' % (self._endpoint.host, self._endpoint.port)))
     self._open_result = AsyncResult.Complete()
     self._session = requests.Session()
     self._raise_on_http_error = sink_properties.raise_on_http_error
@@ -105,6 +104,8 @@ class HttpTransportSink(HttpTransportSinkBase):
       response = self._session.get(url, **kwargs)
     elif method == 'post':
       response = self._session.post(url, **kwargs)
+    elif method == 'put':
+      response = self._session.put(url, **kwargs)
     else:
       raise NotImplementedError()
     return response

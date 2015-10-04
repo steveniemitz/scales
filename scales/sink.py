@@ -25,6 +25,7 @@ from .message import (
 from .timer_queue import GLOBAL_TIMER_QUEUE
 from .varz import (
   Rate,
+  Source,
   VarzBase
 )
 
@@ -212,7 +213,8 @@ class ClientTimeoutSink(ClientMessageSink):
   def __init__(self, next_provider, sink_properties, global_properties):
     super(ClientTimeoutSink, self).__init__()
     self.next_sink = next_provider.CreateSink(global_properties)
-    self._varz = self.Varz(global_properties[SinkProperties.Label])
+    self._varz = self.Varz(
+      Source(service=global_properties[SinkProperties.Label]))
 
   def _TimeoutHelper(self, evt, sink_stack):
     """Waits for ar to be signaled or [timeout] seconds to elapse.  If the

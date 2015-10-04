@@ -34,7 +34,7 @@ from ..sink import FailingMessageSink
 from ..varz import (
   Counter,
   Gauge,
-  SourceType,
+  Source,
   VarzBase
 )
 
@@ -113,7 +113,6 @@ class HeapBalancerSink(LoadBalancerSink):
                  because there were no members in the pool.
     """
     _VARZ_BASE_NAME = 'scales.loadbalancer.Heap'
-    _VARZ_SOURCE_TYPE = SourceType.Service
     _VARZ = {
       'size': Gauge,
       'no_members': Counter
@@ -149,7 +148,7 @@ class HeapBalancerSink(LoadBalancerSink):
     self._open = False
     self._heap_lock = RLock()
     service_name = global_properties[SinkProperties.Label]
-    self.__varz = self.HeapVarz(service_name)
+    self.__varz = self.HeapVarz(Source(service=service_name))
     super(HeapBalancerSink, self).__init__(next_provider, sink_properties, global_properties)
 
   def AsyncProcessRequest(self, sink_stack, msg, stream, headers):

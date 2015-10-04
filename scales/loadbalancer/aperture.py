@@ -21,7 +21,7 @@ from ..varz import (
   Ema,
   Gauge,
   MonoClock,
-  SourceType,
+  Source,
   VarzBase
 )
 
@@ -36,7 +36,6 @@ class ApertureBalancerSink(HeapBalancerSink):
     load_average - The most recently calculated load average.
     """
     _VARZ_BASE_NAME = 'scales.loadbalancer.Aperture'
-    _VARZ_SOURCE_TYPE = SourceType.Service
     _VARZ = {
       'idle': Gauge,
       'active': Gauge,
@@ -54,7 +53,7 @@ class ApertureBalancerSink(HeapBalancerSink):
     self._jitter_min = sink_properties.jitter_min_sec
     self._jitter_max = sink_properties.jitter_max_sec
     service_name = global_properties[SinkProperties.Label]
-    self.__varz = self.ApertureVarz(service_name)
+    self.__varz = self.ApertureVarz(Source(service=service_name))
     self._pending_endpoints = set()
     super(ApertureBalancerSink, self).__init__(next_provider, sink_properties, global_properties)
     if self._jitter_min > 0:
