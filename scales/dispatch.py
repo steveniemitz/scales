@@ -31,6 +31,69 @@ class ScalesError(Exception):
 
 class ServiceClosedError(Exception): pass
 
+class _AsyncResponseSink(ClientMessageSink):
+  @staticmethod
+  def _WrapException(msg):
+    """Creates an exception object that contains the inner exception
+    from a SystemErrorMessage.  This allows the actual failure stack
+    to propagate to the waiting greenlet.
+
+    Args:
+      msg - The MethodReturnMessage that has an active error.
+
+    Returns:
+      An exception object wrapping the error in the MethodCallMessage.
+    """
+    # Don't wrap timeouts.
+    if isinstance(msg.error, TimeoutError):
+      return msg.error
+
+    stack = getattr(msg, 'stack', None)
+    if stack:
+      ex_msg = """An error occurred while processing the request
+[Inner Exception: --------------------]
+%s[End of Inner Exception---------------]
+""" % ''.join(stack)
+      return ScalesError(msg.error, ex_msg)
+    else:
+      return msg.error
+
+  def AsyncProcessRequest(self, sink_stack, msg, stream, headers):
+    raise NotImplementedError("This should never be called")
+
+  def AsyncProcessResponse(self, sink_stack, context, stream, msg):
+    """Propagate the results from a message onto an AsyncResult.
+
+    Args:
+      msg - The reply message (a MethodReturnMessage).
+    """
+    source, start_time, ar, msg_props = context
+    endpoint = msg_props.get(MessageProperties.Endpoint, None)
+    if endpoint and not isinstance(endpoint, str):
+      endpoint = str(endpoint)
+    if source:
+      host_source = Source(method=source.method,
+        service=source.service,
+        endpoint=endpoint)
+    else:
+      host_source = None
+
+    end_time = time.time()
+    if host_source:
+      MessageDispatcher.Varz.request_latency(host_source, end_time - start_time) # pylint: disable=no-member
+    if isinstance(msg, MethodReturnMessage):
+      if msg.error:
+        if host_source:
+          MessageDispatcher.Varz.exception_messages(host_source) # pylint: disable=no-member
+        ar.set_exception(self._WrapException(msg))
+      else:
+        if host_source:
+          MessageDispatcher.Varz.success_messages(host_source) # pylint: disable=no-member
+        ar.set(msg.return_value)
+    else:
+      ar.set_exception(InternalError('Unknown response message of type %s'
+                                     % msg.__class__))
+
 class MessageDispatcher(ClientMessageSink):
   """Handles dispatching incoming and outgoing messages to a client sink stack."""
 
@@ -98,88 +161,47 @@ class MessageDispatcher(ClientMessageSink):
     timeout = timeout or self._dispatch_timeout
     start_time = time.time()
     if self._open_ar.ready():
-      return self._DispatchMethod(self._open_ar, method, args, kwargs, timeout, start_time)
+      return self._DispatchMethod(method, args, kwargs, timeout, start_time)
     else:
       # _DispatchMethod returns an AsyncResult, so we end up with an
       # AsyncResult<AsyncResult<TRet>>, Unwrap() removes one layer, yielding
       # an AsyncResult<TRet>
       return self._open_ar.ContinueWith(
-          lambda ar: self._DispatchMethod(ar, method, args, kwargs, timeout, start_time)
+          lambda ar: self._DispatchMethod(method, args, kwargs, timeout, start_time)
       ).Unwrap()
 
-  def _DispatchMethod(self, open_result, method, args, kwargs, timeout, start_time):
+  @staticmethod
+  def StaticDispatchMessage(sink, source, start_time, deadline, disp_msg):
+    # Init the properties dictionary w/ an empty endpoint
+    disp_msg.properties[MessageProperties.Endpoint] = None
+    if deadline:
+      disp_msg.properties[Deadline.KEY] = deadline
+
+    ar = AsyncResult()
+    sink_stack = ClientMessageSinkStack()
+    repsonse_sink = _AsyncResponseSink()
+    sink_stack.Push(repsonse_sink, (source, start_time, ar, disp_msg.properties))
+    gevent.spawn(sink.AsyncProcessRequest, sink_stack, disp_msg, None, {})
+    return ar
+
+  def _DispatchMethod(self, method, args, kwargs, timeout, start_time):
     open_time = time.time()
     open_latency = open_time - start_time
 
-    disp_msg = MethodCallMessage(self._service, method, args, kwargs)
-    # Init the properties dictionary w/ an empty endpoint
-    disp_msg.properties[MessageProperties.Endpoint] = None
     if timeout:
       # Calculate the deadline for this method call.
       # Reduce it by the time it took for the open() to complete.
       deadline = start_time + timeout - open_latency
-      disp_msg.properties[Deadline.KEY] = deadline
+    else:
+      deadline = None
 
+    disp_msg = MethodCallMessage(self._service, method, args, kwargs)
     source = Source(method=method, service=self._name)
     self.Varz.dispatch_messages(source) # pylint: disable=no-member
-
-    ar = AsyncResult()
-    sink_stack = ClientMessageSinkStack()
-    sink_stack.Push(self, (source, start_time, ar, disp_msg.properties))
-    gevent.spawn(self.next_sink.AsyncProcessRequest, sink_stack, disp_msg, None, {})
-    return ar
-
-  @staticmethod
-  def _WrapException(msg):
-    """Creates an exception object that contains the inner exception
-    from a SystemErrorMessage.  This allows the actual failure stack
-    to propagate to the waiting greenlet.
-
-    Args:
-      msg - The MethodReturnMessage that has an active error.
-
-    Returns:
-      An exception object wrapping the error in the MethodCallMessage.
-    """
-    # Don't wrap timeouts.
-    if isinstance(msg.error, TimeoutError):
-      return msg.error
-
-    stack = getattr(msg, 'stack', None)
-    if stack:
-      ex_msg = """An error occurred while processing the request
-[Inner Exception: --------------------]
-%s[End of Inner Exception---------------]
-""" % ''.join(stack)
-      return ScalesError(msg.error, ex_msg)
-    else:
-      return msg.error
+    return self.StaticDispatchMessage(self.next_sink, source, start_time, deadline, disp_msg)
 
   def AsyncProcessRequest(self, sink_stack, msg, stream, headers):
     raise NotImplementedError("This should never be called.")
 
   def AsyncProcessResponse(self, sink_stack, context, stream, msg):
-    """Propagate the results from a message onto an AsyncResult.
-
-    Args:
-      msg - The reply message (a MethodReturnMessage).
-    """
-    source, start_time, ar, msg_props = context
-    endpoint = msg_props.get(MessageProperties.Endpoint, None)
-    if endpoint and not isinstance(endpoint, str):
-      endpoint = str(endpoint)
-    host_source = Source(method=source.method,
-                         service=source.service,
-                         endpoint=endpoint)
-    end_time = time.time()
-    self.Varz.request_latency(host_source, end_time - start_time) # pylint: disable=no-member
-    if isinstance(msg, MethodReturnMessage):
-      if msg.error:
-        self.Varz.exception_messages(host_source) # pylint: disable=no-member
-        ar.set_exception(self._WrapException(msg))
-      else:
-        self.Varz.success_messages(host_source) # pylint: disable=no-member
-        ar.set(msg.return_value)
-    else:
-      ar.set_exception(InternalError('Unknown response message of type %s'
-                                           % msg.__class__))
+    raise NotImplementedError("This should never be called.")

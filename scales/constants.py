@@ -13,7 +13,6 @@ class Int(object):
   MaxValue = 2147483647
   MinValue = -2147483648
 
-
 class SinkProperties(object):
   Endpoint = 'endpoint'
   ServiceInterface = 'service_iface'
@@ -27,3 +26,6 @@ class SinkRole(object):
   Pool = 'pool'
   LoadBalancer = 'loadbalancer'
   Formatter = 'formatter'
+
+class TransportHeaders(object):
+  MessageType = '__MessageType'

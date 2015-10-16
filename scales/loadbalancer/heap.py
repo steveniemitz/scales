@@ -28,9 +28,13 @@ from ..constants import (
   ChannelState,
   Int,
   MessageProperties,
-  SinkProperties
+  SinkProperties,
+  SinkRole
 )
-from ..sink import FailingMessageSink
+from ..sink import (
+  FailingMessageSink,
+  SinkProvider,
+)
 from ..varz import (
   Counter,
   Gauge,
@@ -363,3 +367,8 @@ class HeapBalancerSink(LoadBalancerSink):
   @property
   def state(self):
     return max([n.channel.state for n in self._heap])
+
+HeapBalancerSink.Builder = SinkProvider(
+  HeapBalancerSink,
+  SinkRole.LoadBalancer,
+  server_set_provider = None)

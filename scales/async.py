@@ -7,6 +7,24 @@ import gevent
 from gevent import Greenlet
 from gevent.event import AsyncResult as g_AsyncResult
 
+class NamedGreenlet(Greenlet):
+  def __init__(self, run=None, *args, **kwargs):
+    self.name = None
+    Greenlet.__init__(self, run, *args, **kwargs)
+
+  @classmethod
+  def spawn(cls, name, *args, **kwargs):
+    g = cls(*args, **kwargs)
+    g.name = name
+    g.start()
+    return g
+
+  def __repr__(self):
+    if self.name:
+      return self.name
+    else:
+      return NamedGreenlet.__repr__(self)
+
 class AsyncResult(g_AsyncResult):
   @staticmethod
   def WhenAll(ars):
@@ -111,14 +129,19 @@ class AsyncResult(g_AsyncResult):
     """
     gevent.spawn(self._SafeLinkHelper, fn)
 
-  def ContinueWith(self, fn):
+  def ContinueWith(self, fn, on_hub=True):
     cw_ar = AsyncResult()
     def continue_with_callback(_ar):
-      try:
-        val = fn(_ar)
-        cw_ar.set(val)
-      except:
-        cw_ar.set_exception(sys.exc_info()[0])
+      def run():
+        try:
+          val = fn(_ar)
+          cw_ar.set(val)
+        except:
+          cw_ar.set_exception(sys.exc_info()[0])
+      if on_hub:
+        run()
+      else:
+        gevent.spawn(run)
     self.rawlink(continue_with_callback)
     return cw_ar
 

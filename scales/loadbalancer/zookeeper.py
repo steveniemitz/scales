@@ -162,7 +162,7 @@ class ServerSet(object):
       return self._count != 0
 
   def __init__(self, zk, zk_path, on_join=None, on_leave=None,
-      member_filter=None, member_factory=Member.from_node):
+      member_filter=None, member_factory=None):
     """Initialize the ServerSet, ensuring the zk_path exists.
 
     Args:
@@ -172,7 +172,7 @@ class ServerSet(object):
       on_join - An optional function to call when members join the node.
       on_leave - An optional function to call when members leave the node.
       member_filter - An optional function to filter children from ZK.
-      member_factory - A function to create a Member object from a znode.
+      member_factory - An optional function to create a Member object from a znode.
     """
     def noop(*args, **kwargs): pass
     def true(*args, **kwargs): return True
@@ -195,7 +195,7 @@ class ServerSet(object):
     self._watching = False
     self._cb_blocker = self._CallbackBlocker()
     self._member_filter = member_filter or true
-    self._member_factory = member_factory
+    self._member_factory = member_factory or Member.from_node
     gevent.spawn(self._notification_worker)
 
     if on_join or on_leave:

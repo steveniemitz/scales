@@ -20,17 +20,15 @@ from ..message import (
 )
 from ..sink import (
   SinkProvider,
-  SinkProviderBase,
+  SocketTransportSinkProvider,
   ClientMessageSink,
 )
-from ..thrift.socket import TSocket
 from ..varz import (
   AggregateTimer,
   AverageTimer,
   Rate,
   Source,
   VarzBase,
-  VarzSocketWrapper
 )
 from .serializer import MessageSerializer
 
@@ -194,23 +192,7 @@ class SocketTransportSink(ClientMessageSink):
     pass
 
 
-class SocketTransportSinkProvider(SinkProviderBase):
-  SINK_CLS = SocketTransportSink
-  Role = SinkRole.Transport
-
-  def CreateSink(self, properties):
-    server = properties[SinkProperties.Endpoint]
-    service = properties[SinkProperties.Label]
-    sock = TSocket.TSocket(server.host, server.port)
-    healthy_sock = VarzSocketWrapper(sock, service)
-    sink = self.SINK_CLS(healthy_sock, service)
-    return sink
-
-  @property
-  def sink_class(self):
-    return self.SINK_CLS
-
-SocketTransportSink.Builder = SocketTransportSinkProvider
+SocketTransportSink.Builder = SocketTransportSinkProvider(SocketTransportSink)
 
 
 class ThriftSerializerSink(ClientMessageSink):

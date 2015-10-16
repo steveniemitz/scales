@@ -7,7 +7,7 @@ from scales.message import (MethodReturnMessage, FailedFastError)
 from scales.loadbalancer.serverset import ServerSetProvider
 from scales.sink import (ClientMessageSink, ClientMessageSinkStack, SinkProviderBase)
 from scales.varz import VarzSocketWrapper
-from scales.thrift.socket import TSocket
+from scales.scales_socket import ScalesSocket
 
 class MockSinkStack(ClientMessageSinkStack):
   def __init__(self):
@@ -129,8 +129,9 @@ class MockServerSetProvider(ServerSetProvider):
 
 def noop(*args, **kwargs): pass
 
-class MockSocket(TSocket.TSocket):
+class MockSocket(ScalesSocket):
   def __init__(self, host, port, open=None, close=None, read=None, write=None):
+    super(MockSocket, self).__init__(host, port)
     self.host = host
     self.port = port
     self._open = open or noop

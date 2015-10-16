@@ -12,23 +12,27 @@ from abc import (
   abstractproperty
 )
 from collections import (deque, namedtuple)
+from weakref import WeakValueDictionary
 import time
 
+from gevent.coros import RLock
+
 from .async import AsyncResult
-from .constants import (ChannelState, SinkProperties)
+from .constants import (ChannelState, SinkProperties, SinkRole)
 from .observable import Observable
 from .message import (
   Deadline,
   MethodReturnMessage,
   TimeoutError
 )
+from .scales_socket import ScalesSocket
 from .timer_queue import GLOBAL_TIMER_QUEUE
 from .varz import (
   Rate,
   Source,
-  VarzBase
+  VarzBase,
+  VarzSocketWrapper
 )
-
 
 class MessageSink(object):
   """A base class for all message sinks.
@@ -282,6 +286,14 @@ class SinkProviderBase(object):
   def sink_class(self):
     pass
 
+  def Clone(self, **kwargs):
+    """Creates a copy of this sink_provider with new properties"""
+    new_props = self.sink_properties.__dict__.copy()
+    new_props.update(kwargs)
+    new_provider = type(self)(**new_props)
+    new_provider.next_provider = self.next_provider
+    return new_provider
+
 
 def SinkProvider(sink_cls, role=None, **defaults):
   """Factory for creating simple sink providers.
@@ -315,3 +327,78 @@ def SinkProvider(sink_cls, role=None, **defaults):
   return provider
 
 TimeoutSinkProvider = SinkProvider(ClientTimeoutSink)
+
+def SocketTransportSinkProvider(sink_cls):
+  class _SocketTransportSinkProvider(SinkProviderBase):
+    SINK_CLS = sink_cls
+    Role = SinkRole.Transport
+
+    def CreateSink(self, properties):
+      server = properties[SinkProperties.Endpoint]
+      service = properties[SinkProperties.Label]
+      sock = ScalesSocket(server.host, server.port)
+      healthy_sock = VarzSocketWrapper(sock, service)
+      sink = self.SINK_CLS(healthy_sock, service)
+      return sink
+
+    @property
+    def sink_class(self):
+      return self.SINK_CLS
+
+  return _SocketTransportSinkProvider
+
+class RefCountedSink(ClientMessageSink):
+  def __init__(self, next_sink):
+    super(RefCountedSink, self).__init__()
+    self._ref_count = 0
+    self._open_lock = RLock()
+    self._open_ar = None
+    self.next_sink = next_sink
+
+  def AsyncProcessRequest(self, sink_stack, msg, stream, headers):
+    self.next_sink.AsyncProcessRequest(sink_stack, msg, stream, headers)
+
+  def AsyncProcessResponse(self, sink_stack, context, stream, msg):
+    raise NotImplementedError("Not called")
+
+  @property
+  def on_faulted(self):
+    return self.next_sink.on_faulted
+
+  def Open(self):
+    with self._open_lock:
+      self._ref_count += 1
+      if self._ref_count == 1:
+        self._open_ar = self.next_sink.Open()
+    return self._open_ar
+
+  def Close(self):
+    with self._open_lock:
+      if self._ref_count == 0:
+        return
+      self._ref_count -= 1
+      if self._ref_count == 0:
+        self._open_ar = None
+        self.next_sink.Close()
+
+class SharedSinkProvider(SinkProviderBase):
+  def __init__(self, key_selector):
+    self._key_selector = key_selector
+    self._cache = WeakValueDictionary()
+    super(SharedSinkProvider, self).__init__()
+
+  def CreateSink(self, properties):
+    key = self._key_selector(properties)
+    if key:
+      sink = self._cache.get(key)
+      if not sink:
+        new_sink = self.next_provider.CreateSink(properties)
+        sink = RefCountedSink(new_sink)
+        self._cache[key] = sink
+      return sink
+    else:
+      return self.next_provider.CreateSink(properties)
+
+  @property
+  def sink_class(self):
+    return self.next_provider.sink_class

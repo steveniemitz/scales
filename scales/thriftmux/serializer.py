@@ -1,5 +1,6 @@
 from struct import (pack, unpack)
 
+from ..constants import TransportHeaders
 from ..message import (
   MethodCallMessage,
   MethodDiscardMessage,
@@ -7,23 +8,12 @@ from ..message import (
   ServerError,
   Deadline
 )
+from ..mux.sink import Tag
 from ..thrift.serializer import MessageSerializer as ThriftMessageSerializer
 from .protocol import (
-  Headers,
   Rstatus,
   MessageType
 )
-
-class Tag(object):
-  KEY = "__Tag"
-
-  def __init__(self, tag):
-    self._tag = tag
-
-  def Encode(self):
-    return [self._tag >> 16 & 0xff,
-            self._tag >>  8 & 0xff,
-            self._tag       & 0xff]
 
 
 class MessageSerializer(object):
@@ -43,14 +33,14 @@ class MessageSerializer(object):
       self._thrift_serializer = ThriftMessageSerializer(service_cls)
 
   def _Marshal_Tdispatch(self, msg, buf, headers):
-    headers[Headers.MessageType] = MessageType.Tdispatch
+    headers[TransportHeaders.MessageType] = MessageType.Tdispatch
     MessageSerializer._WriteContext(msg.public_properties, buf)
     buf.write(pack('!hh', 0, 0)) # len(dst), len(dtab), both unsupported
     self._thrift_serializer.SerializeThriftCall(msg, buf)
 
   @staticmethod
   def _Marshal_Tdiscarded(msg, buf, headers):
-    headers[Headers.MessageType] = MessageType.Tdiscarded
+    headers[TransportHeaders.MessageType] = MessageType.Tdiscarded
     buf.write(pack('!BBB', *Tag(msg.which).Encode()))
     buf.write(msg.reason)
 

@@ -17,7 +17,3 @@ class Rstatus(Enum):
   OK = 0
   ERROR = 1
   NACK = 2
-
-
-class Headers(object):
-  MessageType = '__MessageType'
