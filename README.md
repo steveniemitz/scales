@@ -1,3 +1,5 @@
+[![Build Status](https://travis-ci.org/steveniemitz/scales.svg?branch=master)](https://travis-ci.org/steveniemitz/scales)
+
 # scales
 A protocol agnostic RPC client stack for python.
 
