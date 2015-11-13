@@ -1,7 +1,7 @@
 from distutils.core import setup
 
 setup(
-  name='scales',
+  name='scales-rpc',
   version='1.0.0',
   author='Steve Niemitz',
   author_email='sniemitz@twitter.com',
