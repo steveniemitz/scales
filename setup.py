@@ -1,15 +1,18 @@
-from distutils.core import setup
+from setuptools import setup
 
 setup(
   name='scales-rpc',
-  version='1.0.0',
+  version='1.0.1',
   author='Steve Niemitz',
   author_email='sniemitz@twitter.com',
   url='https://www.github.com/steveniemitz/scales',
+  summary='A generic python RPC client framework.',
   packages=['scales',
             'scales.http',
             'scales.loadbalancer',
+            'scales.mux',
             'scales.pool',
+            'scales.redis',
             'scales.thrift',
             'scales.thrifthttp',
             'scales.thriftmux'],
