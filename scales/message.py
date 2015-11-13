@@ -20,6 +20,7 @@ class Deadline(object):
 class ClientError(Exception): pass
 class FailedFastError(Exception): pass
 class ServerError(Exception): pass
+class ChannelConcurrencyError(Exception): pass
 class TimeoutError(Exception):
   def __init__(self):
     super(TimeoutError, self).__init__(

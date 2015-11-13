@@ -74,7 +74,7 @@ class TagPool(object):
     Raises:
       Exception if the next tag will be > max_tag
     """
-    if not any(self._set):
+    if not self._set:
       if self._next == self._max_tag - 1:
         self._varz.pool_exhausted()
         raise Exception("No tags left in pool.")

@@ -70,7 +70,7 @@ class AsyncResult(g_AsyncResult):
       complete, or, if all fail, the exception thrown by the last to fail.
     """
     ready_ars = [ar for ar in ars if ar.ready()]
-    if any(ready_ars):
+    if ready_ars:
       return ready_ars[0]
 
     ret = AsyncResult()
@@ -193,3 +193,7 @@ class AsyncResult(g_AsyncResult):
 
 _COMPLETE = AsyncResult()
 _COMPLETE.set()
+
+class NoopTimeout(object):
+  def start(self): pass
+  def cancel(self): pass

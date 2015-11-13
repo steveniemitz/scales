@@ -60,7 +60,7 @@ class TimerQueue(object):
   def _TimerWorker(self):
     while True:
       # If the queue is empty, wait for an item to be added.
-      if not any(self._queue):
+      if not self._queue:
         self._event.wait()
 
       if self._event.is_set():

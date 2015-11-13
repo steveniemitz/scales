@@ -1,6 +1,6 @@
 from cStringIO import StringIO
 
-from struct import pack
+from struct import pack, Struct
 from collections import namedtuple
 from ..binary import (
   BinaryReader,
@@ -42,6 +42,12 @@ class ErrorCode(object):
   ConsumerCoordinatorNotAvailableCode = 15
   NotCoordinatorForConsumerCode = 16
 
+  ReloadMetadataCodes = (
+    UnknownTopicOrPartition,
+    NotLeaderForPartition,
+    BrokerNotAvailable
+  )
+
   _ErrorCodeLookup = {
    -1: 'Unknown',
     0: 'NoError',
@@ -67,8 +73,10 @@ class ErrorCode(object):
 
 
 class KafkaError(Exception):
-  def __init__(self, error_code):
+  def __init__(self, message, error_code):
+    self.message = message
     self.error_code = error_code
+    super(KafkaError, self).__init__(message)
 
 class NoBrokerForTopicException(Exception): pass
 
@@ -78,6 +86,10 @@ PartitionMetadata = namedtuple('PartitionMetadata', 'topic_name partition_id lea
 ProduceResponse = namedtuple('ProduceResponse', 'topic partition error offset')
 
 class KafkaProtocol(object):
+  MSG_STRUCT = Struct('!BBii')
+  MSG_HEADER = Struct('!qii')
+  PRODUCE_HEADER = Struct('!hii')
+
   def DeserializeMessage(self, buf, msg_type):
     # Skip the correlationId
     buf.read(4)
@@ -124,18 +136,17 @@ class KafkaProtocol(object):
 
       partition_data = {}
       for p in range(num_partitions):
-        error_code, partition_id, leader, num_replicas = reader.Unpack('!hiii')
-        replicas = reader.Unpack('!%di' % num_replicas)
-        num_isr = reader.ReadInt32()
-        isr = reader.Unpack('!%di' % num_isr)
+        error_code, partition_id, leader = reader.Unpack('!hii')
+        replicas = reader.ReadInt32Array()
+        isr = reader.ReadInt32Array()
         partition_data[partition_id] = PartitionMetadata(
           topic_name, partition_id, leader, replicas, isr)
 
       topic_metadata[topic_name] = partition_data
     return MethodReturnMessage(MetadataResponse(brokers, topic_metadata))
 
-  def _SerializeMessage(self, payload):
-    return pack('!BBii', 0, 0, -1, len(payload)) + payload
+  def _GetMessageHeader(self, payload):
+    return self.MSG_STRUCT.pack(0, 0, -1, len(payload))
 
   def _SerializeProduceRequest(self, msg, buf, headers):
     headers[TransportHeaders.MessageType] = MessageType.ProduceRequest
@@ -143,29 +154,29 @@ class KafkaProtocol(object):
     endpoint = msg.properties[MessageProperties.Endpoint]
 
     writer = BinaryWriter(buf)
-    # Header
-    writer.WriteInt16(acks)
-    writer.WriteInt32(1000) #Timeout
-    writer.WriteInt32(1) # 1 message set
+
+    # Header, 1000ms timeout, 1 message set
+    writer.WriteStruct(self.PRODUCE_HEADER, acks, 1000, 1)
 
     writer.WriteString(topic)
     writer.WriteInt32(1) # 1 payload
     writer.WriteInt32(endpoint.partition_id)
 
-    msg_set_buf = StringIO()
-    msg_set_writer = BinaryWriter(msg_set_buf)
+    # [Offset (8) + HeaderLen (4) + CRC (4) + payload (P) + header(10)] x N messages
+    msg_set_len = sum([8 + 4 + 4 + len(p) + 10 for p in payloads])
+    writer.WriteInt32(msg_set_len)
 
     for p in payloads:
-      msg_data = self._SerializeMessage(p)
-      crc = zlib.crc32(msg_data)
+      header = self._GetMessageHeader(p)
+      # Calculate the CRC
+      crc = zlib.crc32(header)
+      crc = zlib.crc32(p, crc)
 
-      msg_set_writer.WriteInt64(0) # Offset
-      msg_set_writer.WriteInt32(len(msg_data) + 4) # msg + crc (int32)
-
-      msg_set_writer.WriteInt32(crc)
-      msg_set_buf.write(msg_data)
-
-    writer.WriteBinary(msg_set_buf.getvalue())
+      # Write the header
+      writer.WriteStruct(self.MSG_HEADER, 0, len(header) + len(p) + 4, crc)
+      # Write the message data
+      writer.WriteRaw(header)
+      writer.WriteRaw(p)
 
   def _DeserializeProduceResponse(self, buf):
     reader = BinaryReader(buf)

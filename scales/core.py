@@ -57,7 +57,7 @@ class ClientProxyBuilder(object):
     # Get all methods defined on the interface.
     iface_methods = { m[0]: ProxyMethod(*m)
                       for m in inspect.getmembers(Iface, is_user_method) }
-
+    iface_methods.pop('__init__', None)
     iface_methods.update({ m[0] + "_async": ProxyMethod(*m, async=True)
                            for m in inspect.getmembers(Iface, is_user_method) })
 

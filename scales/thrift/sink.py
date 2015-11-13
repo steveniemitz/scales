@@ -5,13 +5,17 @@ import time
 import gevent
 from thrift.protocol.TBinaryProtocol import TBinaryProtocolAcceleratedFactory
 
-from ..async import AsyncResult
+from ..async import (
+  AsyncResult,
+  NoopTimeout
+)
 from ..constants import (
   ChannelState,
   SinkProperties,
   SinkRole
 )
 from ..message import (
+  ChannelConcurrencyError,
   ClientError,
   Deadline,
   MethodCallMessage,
@@ -32,11 +36,6 @@ from ..varz import (
 )
 from .serializer import MessageSerializer
 
-class ChannelConcurrencyError(Exception): pass
-
-class NoopTimeout(object):
-  def start(self): pass
-  def cancel(self): pass
 
 class SocketTransportSink(ClientMessageSink):
   """A sink to transport thrift method calls over a socket.

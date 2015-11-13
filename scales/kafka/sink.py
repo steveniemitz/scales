@@ -150,7 +150,8 @@ class KafkaRouterSink(ClientMessageSink):
     seen_new_topics = set()
 
     for topic_name, t in broker_metadata.topics.items():
-      partition_leaders = set((p.partition_id, p.leader) for p in t.values())
+      partition_leaders = set((p.partition_id, p.leader)
+                              for p in t.values() if p.leader != -1)
       topic_brokers = set((partition_id, brokers[broker])
                        for partition_id, broker in partition_leaders)
       topic_state = self._topics.get(topic_name)
@@ -212,7 +213,7 @@ class KafkaRouterSink(ClientMessageSink):
             self._AsyncProcessRequestToTopic(sink_stack, msg, topic_info)
         except Exception as ex:
           sink_stack.AsyncProcessResponseMessage(MethodReturnMessage(error=ex))
-    refresh_ar.ContinueWith(_on_refresh_complete)
+    refresh_ar.ContinueWith(_on_refresh_complete, False)
 
   def _AsyncProcessRequestToTopic(self, sink_stack, msg, topic_info):
     def _send_msg(_):
@@ -241,12 +242,13 @@ class KafkaRouterSink(ClientMessageSink):
         err_code = msg.return_value[0].error
         if err_code == ErrorCode.NoError:
           sink_stack.AsyncProcessResponseMessage(msg)
-        elif err_code == ErrorCode.NotLeaderForPartition and num_retries == 0:
+        elif err_code in ErrorCode.ReloadMetadataCodes and num_retries == 0:
           # Refresh metadata and retry
           req_msg.properties[self._RETRY_KEY] = 1
           self._RefreshBrokersAndRetry(topic_name, sink_stack, req_msg)
         else:
-          err_msg = MethodReturnMessage(error=KafkaError(err_code))
+          err_msg = MethodReturnMessage(error=KafkaError(
+              'Kafka broker returned error %d' % err_code, err_code))
           sink_stack.AsyncProcessResponseMessage(err_msg)
     else:
       # An exception occured, retry once

@@ -48,6 +48,7 @@ class ApertureBalancerSink(HeapBalancerSink):
     self._ema = Ema(5)
     self._time = MonoClock()
     self._min_size = sink_properties.min_size
+    self._max_size = sink_properties.max_size
     self._min_load = sink_properties.min_load
     self._max_load = sink_properties.max_load
     self._jitter_min = sink_properties.jitter_min_sec
@@ -107,7 +108,7 @@ class ApertureBalancerSink(HeapBalancerSink):
     endpoints = list(self._idle_endpoints)
     added_node = None
     new_endpoint = None
-    if any(endpoints):
+    if endpoints:
       new_endpoint = random.choice(endpoints)
       self._idle_endpoints.discard(new_endpoint)
       self._log.debug('Expanding aperture to include %s.' % str(new_endpoint))
@@ -131,7 +132,7 @@ class ApertureBalancerSink(HeapBalancerSink):
     The aperture can be contracted if it's current size is larger than the
     min size.
     """
-    if any(self._pending_endpoints) and not force:
+    if self._pending_endpoints and not force:
       return
 
     num_healthy = len([c for c in self._heap[1:] if c.channel.is_open])
@@ -222,7 +223,9 @@ class ApertureBalancerSink(HeapBalancerSink):
     else:
       aperture_load = avg / aperture_size
       self.__varz.load_average(aperture_load)
-    if aperture_load >= self._max_load and any(self._idle_endpoints):
+    if (aperture_load >= self._max_load
+        and self._idle_endpoints
+        and aperture_size < self._max_size):
       self._TryExpandAperture()
     elif aperture_load <= self._min_load and aperture_size > self._min_size:
       self._ContractAperture()
@@ -232,6 +235,7 @@ ApertureBalancerSink.Builder = SinkProvider(
   SinkRole.LoadBalancer,
   smoothing_window = 5,
   min_size = 1,
+  max_size = 2**31,
   min_load = 0.5,
   max_load = 2.0,
   server_set_provider = None,

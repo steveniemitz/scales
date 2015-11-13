@@ -233,7 +233,7 @@ class VarzAggregator(object):
 
   @staticmethod
   def CalculatePercentile(values, pct):
-    if not any(values):
+    if not values:
       return 0
 
     k = (len(values) - 1) * pct
@@ -317,7 +317,7 @@ class VarzAggregator(object):
             VarzAggregator.CalculatePercentile(values, pct)
             for pct in VarzReceiver.VARZ_PERCENTILES
             ]
-          if any(values):
+          if values:
             source_agg.total.insert(0, sum(values) / float(len(values)))
           else:
             source_agg.total.insert(0, 0)
