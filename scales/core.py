@@ -4,6 +4,8 @@ import collections
 import functools
 import inspect
 
+from urlparse import urlparse
+
 from .constants import (SinkProperties, SinkRole)
 from .dispatch import MessageDispatcher
 from .loadbalancer.serverset import (
@@ -95,17 +97,14 @@ class ScalesUriParser(object):
     }
 
   def Parse(self, uri):
-    prefix, rest = uri.split('://', 1)
-    if not prefix:
-      raise Exception("Invalid URI")
-
-    handler = self.handlers.get(prefix.lower(), None)
+    parsed = urlparse(uri)
+    handler = self.handlers.get(parsed.scheme.lower(), None)
     if not handler:
-      raise Exception("No handler found for prefix %s" % prefix)
-    return handler(rest)
+      raise Exception("No handler found for prefix %s" % parsed.scheme)
+    return handler(parsed)
 
   def _HandleTcp(self, uri):
-    servers = uri.rstrip('/').split(',')
+    servers = uri.netloc.split(',')
     server_objs = []
     for s in servers:
       host, port = s.split(':')
@@ -114,8 +113,10 @@ class ScalesUriParser(object):
     return StaticServerSetProvider(server_objs)
 
   def _HandleZooKeeper(self, uri):
-    hosts, path = uri.split('/', 1)
-    return ZooKeeperServerSetProvider(hosts, path)
+    hosts = uri.netloc
+    path = uri.path
+    endpoint = uri.fragment if uri.fragment else None
+    return ZooKeeperServerSetProvider(hosts, path, endpoint_name=endpoint)
 
 
 class Scales(object):

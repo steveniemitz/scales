@@ -25,6 +25,10 @@ class ServerSetProvider(object):
     """
     raise NotImplementedError()
 
+  @property
+  def endpoint_name(self):
+    return None
+
 
 class StaticServerSetProvider(ServerSetProvider):
   """A ServerSetProvider that returns a static set of servers."""
@@ -55,12 +59,14 @@ class ZooKeeperServerSetProvider(ServerSetProvider):
       zk_path,
       zk_timeout=30,
       member_prefix='member_',
-      member_factory=None):
+      member_factory=None,
+      endpoint_name=None):
     self._zk_client = self._GetZooKeeperClient(zk_servers, zk_timeout)
     self._zk_path = zk_path
     self._server_set = None
     self._member_prefix = member_prefix
     self._member_factory = member_factory
+    self._endpoint_name = endpoint_name
 
   def _GetZooKeeperClient(self, zk_servers, zk_timeout):
     return self.KazooClient(
@@ -83,3 +89,7 @@ class ZooKeeperServerSetProvider(ServerSetProvider):
       raise Exception('Initialize() must be called first.')
 
     return self._server_set.get_members()
+
+  @property
+  def endpoint_name(self):
+    return self._endpoint_name
