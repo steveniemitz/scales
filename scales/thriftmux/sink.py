@@ -145,7 +145,7 @@ class ThriftMuxMessageSerializerSink(ClientMessageSink):
   wire format"""
 
   class Varz(VarzBase):
-    _VARZ_BASE_NAME = 'scales.thriftmux.ThrfitMuxMessageSerializerSink'
+    _VARZ_BASE_NAME = 'scales.thriftmux.ThriftMuxMessageSerializerSink'
     _VARZ = {
       'deserialization_failures': Counter,
       'serialization_failures': Counter,
