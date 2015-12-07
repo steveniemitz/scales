@@ -21,7 +21,7 @@ class CoreCase(unittest.TestCase):
     parser = ScalesUriParser()
     ret = parser.Parse('zk://zk1.zk.com:2181/test/path')
     self.assertIsInstance(ret, ZooKeeperServerSetProvider)
-    self.assertEqual(ret._zk_path, 'test/path')
+    self.assertEqual(ret._zk_path, '/test/path')
     self.assertEqual(list(ret._zk_client.hosts), [('zk1.zk.com', 2181)])
 
   def testClientProxyBuilder(self):
