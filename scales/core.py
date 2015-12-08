@@ -4,7 +4,7 @@ import collections
 import functools
 import inspect
 
-from urlparse import urlparse
+from urlparse import urlparse, ParseResult
 
 from .constants import (SinkProperties, SinkRole)
 from .dispatch import MessageDispatcher
@@ -98,6 +98,18 @@ class ScalesUriParser(object):
 
   def Parse(self, uri):
     parsed = urlparse(uri)
+    # Work around python 2.7.3 not handling # in URIs correctly.
+    if '#' in parsed.path:
+      path, fragment = parsed.path.split('#', 1)
+      parsed = ParseResult(
+          scheme = parsed.scheme,
+          netloc = parsed.netloc,
+          path = path,
+          params = parsed.params,
+          query = parsed.query,
+          fragment = fragment
+      )
+
     handler = self.handlers.get(parsed.scheme.lower(), None)
     if not handler:
       raise Exception("No handler found for prefix %s" % parsed.scheme)
