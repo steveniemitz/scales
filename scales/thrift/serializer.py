@@ -8,7 +8,11 @@ from thrift.Thrift import (
   TMessageType
 )
 
-from ..message import MethodReturnMessage
+from ..constants import MessageProperties
+from ..message import (
+  MethodCallMessage,
+  MethodReturnMessage
+)
 
 class MessageSerializer(object):
   """A serializer that can serialize and deserialize thrift method calls.
@@ -28,6 +32,7 @@ class MessageSerializer(object):
     """
     self._protocol_factory = protocol_factory
     self._seq_id = 0
+    self._service_cls = service_cls
     self._service_modules = [sys.modules[c.__module__]
                              for c in inspect.getmro(service_cls)
                              if not c is object]
@@ -76,22 +81,65 @@ class MessageSerializer(object):
     thrift_args.write(protocol)
     protocol.writeMessageEnd()
 
-  def DeserializeThriftCall(self, buf):
-    """Deserialize a stream and context to a MethodReturnMessage.
+  def SerializeThriftResponse(self, msg, buf):
+    thrift_buffer = TMemoryBuffer()
+    thrift_buffer._buffer = buf
+    protocol = self._protocol_factory.getProtocol(thrift_buffer)
 
-    Args:
-      buf - The buffer.
-      ctx - The context from serialization.
+    ret_cls = self._FindClass('%s_result' % msg.properties[MessageProperties.Method])
 
-    Returns:
-      A MethodCallMessage.
-    """
+    protocol.writeMessageBegin(
+      msg.properties[MessageProperties.Method],
+      TMessageType.REPLY,
+      msg.properties[MessageProperties.SequenceId])
+    ret_msg = ret_cls(msg.return_value)
+    ret_msg.write(protocol)
+    protocol.writeMessageEnd()
 
+  def _DeserializeHeader(self, buf):
     thrift_buffer = TMemoryBuffer()
     thrift_buffer._buffer = buf
     protocol = self._protocol_factory.getProtocol(thrift_buffer)
 
     (fn_name, msg_type, seq_id) = protocol.readMessageBegin()
+    return fn_name, msg_type, protocol, seq_id
+
+  def DeserializeThriftCallMessage(self, buf):
+    """Deserialize a stream to a MethodCallMessage.
+
+    Args:
+      buf - The buffer.
+
+    Returns:
+      A MethodCallMessage.
+    """
+    fn_name, msg_type, protocol, seq_id = self._DeserializeHeader(buf)
+    if msg_type != TMessageType.CALL:
+      raise Exception("Invalid MessageType, expecting CALL, got %s", msg_type)
+
+    args_cls = self._FindClass('%s_args' % fn_name)
+    if args_cls:
+      args_data = args_cls()
+      args_data.read(protocol)
+    else:
+      args_data = object()
+    protocol.readMessageEnd()
+
+    mcm = MethodCallMessage(self._service_cls, fn_name, [], args_data.__dict__)
+    mcm.properties[MessageProperties.SequenceId] = seq_id
+    return mcm
+
+  def DeserializeThriftReturnMessage(self, buf):
+    """Deserialize a stream and context to a MethodReturnMessage.
+
+    Args:
+      buf - The buffer.
+
+    Returns:
+      A MethodReturnMessage.
+    """
+
+    fn_name, msg_type, protocol, seq_id = self._DeserializeHeader(buf)
     if msg_type == TMessageType.EXCEPTION:
       x = TApplicationException()
       x.read(protocol)

@@ -12,7 +12,7 @@ from ..async import (
   AsyncResult,
   NamedGreenlet
 )
-from ..constants import ChannelState
+from ..constants import ChannelState, ConnectionRole
 from ..message import (
   Deadline,
   ClientError,
@@ -134,7 +134,7 @@ class MuxSocketTransportSink(ClientMessageSink):
       'transport_latency': AverageTimer
     }
 
-  def __init__(self, socket, service):
+  def __init__(self, socket, service, connection_type=ConnectionRole.Client):
     super(MuxSocketTransportSink, self).__init__()
     self._socket = socket
     self._state = ChannelState.Idle
@@ -143,6 +143,7 @@ class MuxSocketTransportSink(ClientMessageSink):
     self._socket_source = '%s:%d' % (self._socket.host, self._socket.port)
     self._service = service
     self._open_result = None
+    self._connection_type = connection_type
     self._varz = self.Varz(Source(service=self._service,
       endpoint=self._socket_source))
 
@@ -180,7 +181,8 @@ class MuxSocketTransportSink(ClientMessageSink):
   def _OpenImpl(self):
     try:
       self._log.debug('Opening transport.')
-      self._socket.open()
+      if self._connection_type == ConnectionRole.Client:
+        self._socket.open()
       self._greenlets.append(self._SpawnNamedGreenlet('Recv Loop', self._RecvLoop))
       self._greenlets.append(self._SpawnNamedGreenlet('Send Loop', self._SendLoop))
 
@@ -305,13 +307,13 @@ class MuxSocketTransportSink(ClientMessageSink):
           with self._varz.recv_latency.Measure():
             buf = StringIO(self._socket.readAll(sz))
         self._varz.messages_recv()
-        gevent.spawn(self._ProcessReply, buf)
+        gevent.spawn(self._ProcessRecv, buf)
       except Exception as e:
         self._Shutdown(e)
         break
 
   @abstractmethod
-  def _ProcessReply(self, stream):
+  def _ProcessRecv(self, stream):
     raise NotImplementedError()
 
   def _ProcessTaggedReply(self, tag, stream):
@@ -344,6 +346,9 @@ class MuxSocketTransportSink(ClientMessageSink):
   def _BuildHeader(self, tag, msg_type, data_len):
     raise NotImplementedError()
 
+  def _Send(self, data, msg_props):
+    self._send_queue.put((data, msg_props))
+
   def AsyncProcessRequest(self, sink_stack, msg, stream, headers):
     if self._state == ChannelState.Idle and self._open_result:
       self._log.debug('Waiting for channel to be open')
@@ -365,7 +370,7 @@ class MuxSocketTransportSink(ClientMessageSink):
     data_len = stream.tell()
     header = self._BuildHeader(tag, headers[TransportHeaders.MessageType], data_len)
     payload = header + stream.getvalue()
-    self._send_queue.put((payload, msg.properties))
+    self._Send(payload, msg.properties)
 
   def AsyncProcessResponse(self, sink_stack, context, stream, msg):
     pass

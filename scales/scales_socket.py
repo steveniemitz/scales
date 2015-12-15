@@ -9,6 +9,12 @@ class ScalesSocket(object):
     self.port = port
     self.handle = None
 
+  @classmethod
+  def fromAccept(cls, client_socket, addr):
+    s = cls(*addr)
+    s.handle = client_socket
+    return s
+
   def isOpen(self):
     return self.handle is not None
 
@@ -38,6 +44,16 @@ class ScalesSocket(object):
     if self.handle:
       self.handle.close()
       self.handle = None
+
+  def listen(self, backlog):
+    if self.handle:
+      raise Exception("Socket already open.")
+    self.handle = gsocket()
+    self.handle.bind((self.host, self.port))
+    self.handle.listen(backlog)
+
+  def accept(self):
+    return self.handle.accept()
 
   def readAll(self, sz):
     buff = ''

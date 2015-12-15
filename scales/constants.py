@@ -8,6 +8,9 @@ class ChannelState(object):
   Busy = 3
   Closed = 4
 
+class ConnectionRole(object):
+  Client = 1
+  Server = 2
 
 class Int(object):
   MaxValue = 2147483647
@@ -20,6 +23,8 @@ class SinkProperties(object):
 
 class MessageProperties(object):
   Endpoint = '__Endpoint'
+  Method = '__Method'
+  SequenceId = '__SeqId'
 
 class SinkRole(object):
   Transport = 'transport'

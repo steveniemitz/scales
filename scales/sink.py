@@ -131,6 +131,12 @@ class ClientMessageSink(MessageSink):
     raise NotImplementedError()
 
 
+class ServerMessageSink(ClientMessageSink):
+  pass
+
+class ServerChannelSink(object):
+  pass
+
 class SinkStack(object):
   """A stack of sinks."""
   __slots__ = '_stack',

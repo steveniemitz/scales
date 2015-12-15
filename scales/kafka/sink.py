@@ -61,7 +61,7 @@ class KafkaTransportSink(MuxSocketTransportSink):
     )
     return header
 
-  def _ProcessReply(self, stream):
+  def _ProcessRecv(self, stream):
     tag, = unpack('!i', str(stream.read(4)))
     self._ProcessTaggedReply(tag, stream)
 

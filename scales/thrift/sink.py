@@ -227,7 +227,7 @@ class ThriftSerializerSink(ClientMessageSink):
       sink_stack.AsyncProcessResponseMessage(msg)
     else:
       try:
-        msg = self._serializer.DeserializeThriftCall(stream)
+        msg = self._serializer.DeserializeThriftReturnMessage(stream)
       except Exception as ex:
         msg = MethodReturnMessage(error=ex)
       sink_stack.AsyncProcessResponseMessage(msg)

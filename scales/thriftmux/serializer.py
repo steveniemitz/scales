@@ -21,10 +21,14 @@ class MessageSerializer(object):
   wire format."""
   def __init__(self, service_cls):
     self._marshal_map = {
+      MethodReturnMessage: self._Marshal_Rdispatch,
+
       MethodCallMessage: self._Marshal_Tdispatch,
       MethodDiscardMessage: self._Marshal_Tdiscarded,
     }
     self._unmarshal_map = {
+      MessageType.Tdispatch: self._Unmarshal_Tdispatch,
+
       MessageType.Rdispatch: self._Unmarshal_Rdispatch,
       MessageType.Rerr: self._Unmarshal_Rerror,
       MessageType.BAD_Rerr: self._Unmarshal_Rerror,
@@ -44,6 +48,12 @@ class MessageSerializer(object):
     buf.write(pack('!BBB', *Tag(msg.which).Encode()))
     buf.write(msg.reason)
 
+  def _Marshal_Rdispatch(self, msg, buf, headers):
+    headers[TransportHeaders.MessageType] = MessageType.Rdispatch
+    buf.write(pack('!b', Rstatus.OK))
+    MessageSerializer._WriteContext(msg.public_properties, buf)
+    self._thrift_serializer.SerializeThriftResponse(msg, buf)
+
   @staticmethod
   def _WriteContext(ctx, buf):
     buf.write(pack('!h', len(ctx)))
@@ -59,18 +69,24 @@ class MessageSerializer(object):
         raise NotImplementedError("Unsupported value type in context.")
 
   @staticmethod
-  def _ReadContext(buf):
+  def _ReadContextTuple(buf):
     for _ in range(2):
       sz, = unpack('!h', buf.read(2))
       buf.read(sz)
 
+  @staticmethod
+  def _ReadContext(buf):
+    nctx, = unpack('!h', buf.read(2))
+    for n in range(nctx):
+      MessageSerializer._ReadContextTuple(buf)
+
   def _Unmarshal_Rdispatch(self, buf):
     status, nctx = unpack('!bh', buf.read(3))
     for n in range(0, nctx):
-      self._ReadContext(buf)
+      self._ReadContextTuple(buf)
 
     if status == Rstatus.OK:
-      return self._thrift_serializer.DeserializeThriftCall(buf)
+      return self._thrift_serializer.DeserializeThriftReturnMessage(buf)
     elif status == Rstatus.NACK:
       return MethodReturnMessage(error=ServerError('The server returned a NACK'))
     else:
@@ -80,6 +96,13 @@ class MessageSerializer(object):
   def _Unmarshal_Rerror(buf):
     why = buf.read()
     return MethodReturnMessage(error=ServerError(why))
+
+  def _Unmarshal_Tdispatch(self, buf):
+    self._ReadContext(buf) #context
+    self._ReadContext(buf) #dst
+    self._ReadContext(buf) #dtab
+
+    return self._thrift_serializer.DeserializeThriftCallMessage(buf)
 
   def Unmarshal(self, tag, msg_type, buf):
     """Deserialize a message from a stream.
@@ -108,4 +131,14 @@ class MessageSerializer(object):
     marshaller = self._marshal_map[msg.__class__]
     marshaller(msg, buf, headers)
 
+  @staticmethod
+  def EncodeTag(tag):
+    return [tag >> 16 & 0xff, tag >> 8 & 0xff, tag & 0xff] # Tag
 
+  @staticmethod
+  def BuildHeader(tag, msg_type, data_len):
+    total_len = 1 + 3 + data_len
+    return pack('!ibBBB',
+        total_len,
+        msg_type,
+        *MessageSerializer.EncodeTag(tag))

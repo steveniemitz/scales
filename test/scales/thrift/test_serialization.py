@@ -18,7 +18,7 @@ class ThriftSerializerTestCase(unittest.TestCase):
     raw_message = 'gAEAAgAAAAJoaQAAAAALAAAAAAAYdGhpcyBpcyBhIHJldHVybiBtZXNzYWdlAA=='.decode('base64')
     s = MessageSerializer(Hello.Iface)
     buf = StringIO(raw_message)
-    ret = s.DeserializeThriftCall(buf)
+    ret = s.DeserializeThriftReturnMessage(buf)
     self.assertEqual(ret.return_value, 'this is a return message')
 
 if __name__ == '__main__':

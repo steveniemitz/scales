@@ -7,7 +7,7 @@ from cStringIO import StringIO
 import gevent
 
 from ..async import AsyncResult
-from ..constants import SinkProperties
+from ..constants import SinkProperties, ConnectionRole
 from ..message import (
   Deadline,
   MethodDiscardMessage,
@@ -36,26 +36,18 @@ from .protocol import (
 ROOT_LOG = logging.getLogger('scales.thriftmux')
 
 class SocketTransportSink(MuxSocketTransportSink):
-  def __init__(self, socket, service):
+  def __init__(self, socket, service, connection_role=ConnectionRole.Client):
     self._ping_timeout = 5
     self._ping_msg = self._BuildHeader(1, MessageType.Tping, 0)
     self._last_ping_start = 0
-    super(SocketTransportSink, self).__init__(socket, service)
+    super(SocketTransportSink, self).__init__(socket, service, connection_role)
 
   def _Init(self):
     self._ping_ar = None
     super(SocketTransportSink, self)._Init()
 
-  @staticmethod
-  def _EncodeTag(tag):
-    return [tag >> 16 & 0xff, tag >> 8 & 0xff, tag & 0xff] # Tag
-
   def _BuildHeader(self, tag, msg_type, data_len):
-    total_len = 1 + 3 + data_len
-    return pack('!ibBBB',
-      total_len,
-      msg_type,
-      *self._EncodeTag(tag))
+    return MessageSerializer.BuildHeader(tag, msg_type, data_len)
 
   def _PingLoop(self):
     """Periodically pings the remote server."""
@@ -121,7 +113,7 @@ class SocketTransportSink(MuxSocketTransportSink):
       msg, buf, headers = self._CreateDiscardMessage(tag)
       self.AsyncProcessRequest(None, msg, buf, headers)
 
-  def _ProcessReply(self, stream):
+  def _ProcessRecv(self, stream):
     try:
       msg_type, tag = ThriftMuxMessageSerializerSink.ReadHeader(stream)
       if tag == 1 and msg_type == MessageType.Rping: #Ping
@@ -171,9 +163,8 @@ class ThriftMuxMessageSerializerSink(ClientMessageSink):
       A tuple of (message_type, tag)
     """
     # Python 2.7.3 needs a string to unpack, so cast to one.
-    header, = unpack('!i', str(stream.read(4)))
-    msg_type = (256 - (header >> 24 & 0xff)) * -1
-    tag = ((header << 8) & 0xFFFFFFFF) >> 8
+    msg_type, tag1, tag2, tag3 = unpack('!bBBB', str(stream.read(4)))
+    tag = tag1 << 16 | tag2 << 8 | tag3
     return msg_type, tag
 
   def AsyncProcessRequest(self, sink_stack, msg, stream, headers):
@@ -196,17 +187,39 @@ class ThriftMuxMessageSerializerSink(ClientMessageSink):
     sink_stack.Push(self)
     self.next_sink.AsyncProcessRequest(sink_stack, msg, buf, headers)
 
+  def _DeserializeStream(self, stream, sink_stack):
+    try:
+      msg_type, tag = ThriftMuxMessageSerializerSink.ReadHeader(stream)
+      msg = self._serializer.Unmarshal(tag, msg_type, stream)
+      self._varz.message_bytes_recv(stream.tell())
+    except Exception as ex:
+      self._varz.deserialization_failures()
+      msg = MethodReturnMessage(error=ex)
+    return msg
+
   def AsyncProcessResponse(self, sink_stack, context, stream, msg):
     if msg:
       sink_stack.AsyncProcessResponseMessage(msg)
     else:
-      try:
-        msg_type, tag = ThriftMuxMessageSerializerSink.ReadHeader(stream)
-        msg = self._serializer.Unmarshal(tag, msg_type, stream)
-        self._varz.message_bytes_recv(stream.tell())
-      except Exception as ex:
-        self._varz.deserialization_failures()
-        msg = MethodReturnMessage(error=ex)
+      msg = self._DeserializeStream(stream, sink_stack)
       sink_stack.AsyncProcessResponseMessage(msg)
 
 ThriftMuxMessageSerializerSink.Builder = SinkProvider(ThriftMuxMessageSerializerSink)
+
+class ThriftMuxServerMessageSerializerSink(ThriftMuxMessageSerializerSink):
+  def AsyncProcessRequest(self, sink_stack, msg, stream, headers):
+    msg = self._DeserializeStream(stream, sink_stack)
+    if isinstance(msg, MethodReturnMessage):
+      sink_stack.AsyncProcessResponseMessage(msg)
+      return
+
+    sink_stack.Push(self)
+    self.next_sink.AsyncProcessRequest(sink_stack, msg, stream, headers)
+
+  def AsyncProcessResponse(self, sink_stack, context, stream, msg):
+    buf = StringIO()
+    headers = {}
+    self._serializer.Marshal(msg, buf, headers)
+    sink_stack.AsyncProcessResponseStream(buf)
+
+ThriftMuxServerMessageSerializerSink.Builder = SinkProvider(ThriftMuxServerMessageSerializerSink)
