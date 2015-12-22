@@ -23,8 +23,8 @@ class SinkProperties(object):
 
 class MessageProperties(object):
   Endpoint = '__Endpoint'
-  Method = '__Method'
-  SequenceId = '__SeqId'
+  ThriftMethod = '__ThriftMethod'
+  ThriftSequenceId = '__ThriftSeqId'
 
 class SinkRole(object):
   Transport = 'transport'

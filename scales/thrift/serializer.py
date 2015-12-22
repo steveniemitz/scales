@@ -86,12 +86,12 @@ class MessageSerializer(object):
     thrift_buffer._buffer = buf
     protocol = self._protocol_factory.getProtocol(thrift_buffer)
 
-    ret_cls = self._FindClass('%s_result' % msg.properties[MessageProperties.Method])
+    ret_cls = self._FindClass('%s_result' % msg.properties[MessageProperties.ThriftMethod])
 
     protocol.writeMessageBegin(
-      msg.properties[MessageProperties.Method],
+      msg.properties[MessageProperties.ThriftMethod],
       TMessageType.REPLY,
-      msg.properties[MessageProperties.SequenceId])
+      msg.properties[MessageProperties.ThriftSequenceId])
     ret_msg = ret_cls(msg.return_value)
     ret_msg.write(protocol)
     protocol.writeMessageEnd()
@@ -126,7 +126,7 @@ class MessageSerializer(object):
     protocol.readMessageEnd()
 
     mcm = MethodCallMessage(self._service_cls, fn_name, [], args_data.__dict__)
-    mcm.properties[MessageProperties.SequenceId] = seq_id
+    mcm.properties[MessageProperties.ThriftSequenceId] = seq_id
     return mcm
 
   def DeserializeThriftReturnMessage(self, buf):

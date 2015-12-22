@@ -7,7 +7,7 @@ from cStringIO import StringIO
 import gevent
 
 from ..async import AsyncResult
-from ..constants import SinkProperties, ConnectionRole
+from ..constants import SinkProperties, ConnectionRole, MessageProperties
 from ..message import (
   Deadline,
   MethodDiscardMessage,
@@ -164,7 +164,7 @@ class ThriftMuxMessageSerializerSink(ClientMessageSink):
     """
     # Python 2.7.3 needs a string to unpack, so cast to one.
     msg_type, tag1, tag2, tag3 = unpack('!bBBB', str(stream.read(4)))
-    tag = tag1 << 16 | tag2 << 8 | tag3
+    tag = (tag1 << 16) | (tag2 << 8) | tag3
     return msg_type, tag
 
   def AsyncProcessRequest(self, sink_stack, msg, stream, headers):
@@ -213,12 +213,16 @@ class ThriftMuxServerMessageSerializerSink(ThriftMuxMessageSerializerSink):
       sink_stack.AsyncProcessResponseMessage(msg)
       return
 
-    sink_stack.Push(self)
+    sink_stack.Push(self, (msg.Method, msg.properties[MessageProperties.ThriftSequenceId]))
     self.next_sink.AsyncProcessRequest(sink_stack, msg, stream, headers)
 
   def AsyncProcessResponse(self, sink_stack, context, stream, msg):
     buf = StringIO()
     headers = {}
+
+    method_name, seq_id = context
+    msg.properties[MessageProperties.ThriftMethod] = method_name
+    msg.properties[MessageProperties.ThriftSequenceId] = seq_id
     self._serializer.Marshal(msg, buf, headers)
     sink_stack.AsyncProcessResponseStream(buf)
 
