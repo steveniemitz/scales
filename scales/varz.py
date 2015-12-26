@@ -393,6 +393,12 @@ class VarzSocketWrapper(object):
       self._varz.num_connections(-1)
       self._socket.close()
 
+  def listen(self, backlog):
+    self._socket.listen(backlog)
+
+  def accept(self):
+    return self._socket.accept()
+
   def readAll(self, sz):
     buff = bytearray(sz)
     view = memoryview(buff)

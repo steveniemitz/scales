@@ -5,16 +5,16 @@ from scales.constants import ChannelState, SinkProperties
 from scales.core import ScalesUriParser
 from scales.message import (MethodReturnMessage, FailedFastError)
 from scales.loadbalancer.serverset import ServerSetProvider
-from scales.sink import (ClientMessageSink, ClientMessageSinkStack, SinkProviderBase)
+from scales.sink import (ClientMessageSink, MessageSinkStack, SinkProviderBase)
 from scales.varz import VarzSocketWrapper
 from scales.scales_socket import ScalesSocket
 
-class MockSinkStack(ClientMessageSinkStack):
+class MockSinkStack(MessageSinkStack):
   def __init__(self):
     self.processed_response = False
     self.return_message = None
     self.return_stream = None
-    super(ClientMessageSinkStack, self).__init__()
+    super(MessageSinkStack, self).__init__()
 
   def AsyncProcessResponse(self, stream, msg):
     self.processed_response = True

@@ -1,5 +1,9 @@
 """Scales core module."""
 
+from abc import (
+  abstractmethod,
+  ABCMeta
+)
 import collections
 import functools
 import inspect
@@ -11,6 +15,7 @@ from .loadbalancer.serverset import (
   ZooKeeperServerSetProvider,
 )
 from .sink import TimeoutSinkProvider
+from .server_sink import ServerCallBuilderSink
 
 class _ProxyBase(object):
   def __init__(self, dispatcher):
@@ -122,47 +127,21 @@ class Scales(object):
   """Factory for scales clients."""
 
   SERVICE_REGISTRY = {}
+  SERVER_REGISTRY = {}
 
-  class ClientBuilder(object):
-    """Builder for creating Scales clients."""
+  class Builder(object):
+    __metaclass__ = ABCMeta
 
     def __init__(self, Iface):
       self._service = Iface
       self._name = Iface.__module__
-      self._uri_parser = ScalesUriParser()
-      self._uri = None
       self._timeout = 10
-      self._server_set_provider = None
-      self._client_provider = ClientProxyBuilder()
       self._properties = {}
       self._stack = []
 
     @property
     def name(self):
       return self._name
-
-    @property
-    def server_set_provider(self):
-      return self._server_set_provider
-
-    def SetUri(self, uri):
-      """Sets the URI for this client.
-
-      By default, uri may be in the form of:
-        tcp://<host:port>[,...]
-      or
-        zk://<zk_host:zk:port>[,...]/full/zk/path
-      """
-      self._uri = uri
-      self._server_set_provider = self._uri_parser.Parse(uri)
-      return self
-
-    def SetUriParser(self, parser):
-      """Sets the URI parser for this builder.
-
-      Uri parsers build a ServerSetProvider from a uri."""
-      self._uri_parser = parser
-      return self
 
     def SetTimeout(self, timeout):
       """Sets the default call timeout.
@@ -171,27 +150,6 @@ class Scales(object):
         timeout - A timeout in seconds.
       """
       self._timeout = timeout
-      return self
-
-    def SetClientProvider(self, client_provider):
-      """Sets the client provider.  Client providers are used to create the
-      client proxy class returned from build().
-
-      Args:
-        client_provider - An instance of a ClientProxyBuilder.
-      """
-      self._client_provider = client_provider
-      return self
-
-    def SetServerSetProvider(self, server_set_provider):
-      """Sets the server set provider.  Must be called after SetUri(), or else
-      SetUri() will overwrite the value set here.
-
-      Args:
-        server_set_provider - A subclass of ServerSetProvider.
-      """
-
-      self._server_set_provider = server_set_provider
       return self
 
     def SetName(self, name):
@@ -226,14 +184,76 @@ class Scales(object):
     def ReplaceRole(self, role, sink_params):
       return self._Replace(sink_params, lambda n: n.Role == role)
 
+    def _LinkStack(self):
+      for n, p in enumerate(self._stack[:-1]):
+        p.next_provider = self._stack[n+1]
+
+    @abstractmethod
+    def Build(self):
+      pass
+
+  class ClientBuilder(Builder):
+    """Builder for creating Scales clients."""
+
+    def __init__(self, Iface):
+      super(Scales.ClientBuilder, self).__init__(Iface)
+      self._uri_parser = ScalesUriParser()
+      self._uri = None
+      self._timeout = 10
+      self._server_set_provider = None
+      self._client_provider = ClientProxyBuilder()
+
+    @property
+    def server_set_provider(self):
+      return self._server_set_provider
+
+    def SetUri(self, uri):
+      """Sets the URI for this client.
+
+      By default, uri may be in the form of:
+        tcp://<host:port>[,...]
+      or
+        zk://<zk_host:zk:port>[,...]/full/zk/path
+      """
+      self._uri = uri
+      self._server_set_provider = self._uri_parser.Parse(uri)
+      return self
+
+    def SetUriParser(self, parser):
+      """Sets the URI parser for this builder.
+
+      Uri parsers build a ServerSetProvider from a uri."""
+      self._uri_parser = parser
+      return self
+
+    def SetClientProvider(self, client_provider):
+      """Sets the client provider.  Client providers are used to create the
+      client proxy class returned from build().
+
+      Args:
+        client_provider - An instance of a ClientProxyBuilder.
+      """
+      self._client_provider = client_provider
+      return self
+
+    def SetServerSetProvider(self, server_set_provider):
+      """Sets the server set provider.  Must be called after SetUri(), or else
+      SetUri() will overwrite the value set here.
+
+      Args:
+        server_set_provider - A subclass of ServerSetProvider.
+      """
+
+      self._server_set_provider = server_set_provider
+      return self
+
     def Build(self):
       """Build a client given the current builder configuration.
 
       Returns:
         A proxy object with all methods of Iface.
       """
-      for n, p in enumerate(self._stack[:-1]):
-        p.next_provider = self._stack[n+1]
+      self._LinkStack()
 
       # Add the server set provider to the properties of the load balancer in the
       # stack (if one exists)
@@ -266,7 +286,7 @@ class Scales(object):
       return proxy_obj
 
   @staticmethod
-  def NewBuilder(Iface):
+  def NewClientBuilder(Iface):
     """Creates a new client builder for a given interface.
     All methods on the interface will be proxied into the Scales dispatcher.
 
@@ -276,3 +296,39 @@ class Scales(object):
       A client builder for the interface.
     """
     return Scales.ClientBuilder(Iface)
+
+  class ServerBuilder(Builder):
+    def __init__(self, Iface, handler):
+      super(Scales.ServerBuilder, self).__init__(Iface)
+      self._server_call_builder = ServerCallBuilderSink.Builder
+      self._handler = handler
+      self._endpoint = None
+
+    def SetHandler(self, handler):
+      self._handler = handler
+      return self
+
+    def SetServerCallBuilderSink(self, builder):
+      self._server_call_builder = builder
+      return self
+
+    def SetLocalEndpoint(self, endpoint):
+      self._endpoint = endpoint
+      return self
+
+    def Build(self):
+      self.WithSink(self._server_call_builder(handler=self._handler))
+      self._LinkStack()
+
+      properties = {
+        SinkProperties.Label: self.name,
+        SinkProperties.ServiceInterface: self._service,
+        SinkProperties.Endpoint: self._endpoint
+      }
+      properties.update(self._properties)
+      Scales.SERVER_REGISTRY[self.name] = self._stack[0]
+      return self._stack[0].CreateSink(properties)
+
+  @staticmethod
+  def NewServerBuilder(Iface, handler):
+    return Scales.ServerBuilder(Iface, handler)

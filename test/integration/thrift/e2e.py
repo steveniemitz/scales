@@ -6,21 +6,14 @@ class MessageHandler(object):
     return ttypes.ServiceResponse('%s boom' % message.content)
 
 def server():
-  from scales.thriftmux.server_sink import ThriftMuxServerSocketSink, ServerCallBuilderSink
-  from scales.thriftmux.sink import ThriftMuxServerMessageSerializerSink
-  from scales.scales_socket import ScalesSocket
-  sock = ScalesSocket('0.0.0.0', 8081)
-
-  serializer_provider = ThriftMuxServerMessageSerializerSink.Builder()
-  serializer_provider.next_provider = ServerCallBuilderSink.Builder(handler=MessageHandler())
-  s = ThriftMuxServerSocketSink(sock, ExampleService.Iface, serializer_provider)
-  s.Open()
-
-  from gevent.event import Event
-  Event().wait()
+  from scales.thriftmux import ThriftMux
+  from scales.loadbalancer.zookeeper import Endpoint
+  sink = ThriftMux.NewServerBuilder(ExampleService.Iface, MessageHandler(), Endpoint('0.0.0.0', 8081))
+  sink.Open()
+  sink.Wait()
 
 def client():
-  c = ThriftMux.NewClient(ExampleService.Iface, "tcp://127.0.0.1:8081", 0)
+  c = ThriftMux.NewClient(ExampleService.Iface, "tcp://127.0.0.1:8081", 10)
   ret = c.passMessage(ExampleService.Message("test data"))
   print 'Responded with %s' % ret
 

@@ -9,7 +9,7 @@ class Redis(object):
   @staticmethod
   def NewBuilder():
     import redis
-    return Scales.NewBuilder(redis.StrictRedis) \
+    return Scales.NewClientBuilder(redis.StrictRedis) \
       .WithSink(ApertureBalancerSink.Builder()) \
       .WithSink(WatermarkPoolSink.Builder()) \
       .WithSink(RedisTransportSink.Builder())

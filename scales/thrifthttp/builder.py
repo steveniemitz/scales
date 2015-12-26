@@ -11,7 +11,7 @@ from ..thrift.sink import ThriftSerializerSink
 class ThriftHttp(object):
   @staticmethod
   def NewBuilder(Iface, url_suffix):
-    return Scales.NewBuilder(Iface) \
+    return Scales.NewClientBuilder(Iface) \
       .WithSink(ThriftSerializerSink.Builder(protocol_factory=TJSONProtocolFactory())) \
       .WithSink(ApertureBalancerSink.Builder()) \
       .WithSink(SingletonPoolSink.Builder()) \

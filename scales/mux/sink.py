@@ -134,7 +134,7 @@ class MuxSocketTransportSink(ClientMessageSink):
       'transport_latency': AverageTimer
     }
 
-  def __init__(self, socket, service, connection_type=ConnectionRole.Client):
+  def __init__(self, socket, service, next_provider, sink_properties, global_properties, connection_type=ConnectionRole.Client):
     super(MuxSocketTransportSink, self).__init__()
     self._socket = socket
     self._state = ChannelState.Idle
@@ -209,7 +209,7 @@ class MuxSocketTransportSink(ClientMessageSink):
 
     self._state = ChannelState.Closed
 
-    if reason == self._CLOSE_INVOKED:
+    if reason == self._CLOSE_INVOKED or self._connection_type == ConnectionRole.Server:
       log_fn = self._log.debug
     else:
       log_fn = self._log.warning

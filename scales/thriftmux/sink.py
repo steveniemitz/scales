@@ -36,11 +36,11 @@ from .protocol import (
 ROOT_LOG = logging.getLogger('scales.thriftmux')
 
 class SocketTransportSink(MuxSocketTransportSink):
-  def __init__(self, socket, service, connection_role=ConnectionRole.Client):
+  def __init__(self, socket, service, next_provider, sink_properties, global_properties, connection_role=ConnectionRole.Client):
     self._ping_timeout = 5
     self._ping_msg = self._BuildHeader(1, MessageType.Tping, 0)
     self._last_ping_start = 0
-    super(SocketTransportSink, self).__init__(socket, service, connection_role)
+    super(SocketTransportSink, self).__init__(socket, service, next_provider, sink_properties, global_properties, connection_role)
 
   def _Init(self):
     self._ping_ar = None
@@ -173,7 +173,7 @@ class ThriftMuxMessageSerializerSink(ClientMessageSink):
 
     deadline = msg.properties.get(Deadline.KEY)
     if deadline:
-      headers['com.twitter.finagle.Deadline'] = Deadline(deadline)
+      msg.properties['com.twitter.finagle.Deadline'] = Deadline(deadline)
 
     try:
       self._serializer.Marshal(msg, buf, headers)
@@ -205,25 +205,3 @@ class ThriftMuxMessageSerializerSink(ClientMessageSink):
       sink_stack.AsyncProcessResponseMessage(msg)
 
 ThriftMuxMessageSerializerSink.Builder = SinkProvider(ThriftMuxMessageSerializerSink)
-
-class ThriftMuxServerMessageSerializerSink(ThriftMuxMessageSerializerSink):
-  def AsyncProcessRequest(self, sink_stack, msg, stream, headers):
-    msg = self._DeserializeStream(stream, sink_stack)
-    if isinstance(msg, MethodReturnMessage):
-      sink_stack.AsyncProcessResponseMessage(msg)
-      return
-
-    sink_stack.Push(self, (msg.Method, msg.properties[MessageProperties.ThriftSequenceId]))
-    self.next_sink.AsyncProcessRequest(sink_stack, msg, stream, headers)
-
-  def AsyncProcessResponse(self, sink_stack, context, stream, msg):
-    buf = StringIO()
-    headers = {}
-
-    method_name, seq_id = context
-    msg.properties[MessageProperties.ThriftMethod] = method_name
-    msg.properties[MessageProperties.ThriftSequenceId] = seq_id
-    self._serializer.Marshal(msg, buf, headers)
-    sink_stack.AsyncProcessResponseStream(buf)
-
-ThriftMuxServerMessageSerializerSink.Builder = SinkProvider(ThriftMuxServerMessageSerializerSink)

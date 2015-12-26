@@ -20,6 +20,7 @@ class SinkProperties(object):
   Endpoint = 'endpoint'
   ServiceInterface = 'service_iface'
   Label = 'label'
+  Socket = 'socket'
 
 class MessageProperties(object):
   Endpoint = '__Endpoint'

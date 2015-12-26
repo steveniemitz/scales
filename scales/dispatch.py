@@ -14,7 +14,7 @@ from .message import (
 )
 from .sink import (
   ClientMessageSink,
-  ClientMessageSinkStack
+  MessageSinkStack
 )
 from .varz import (
   Rate,
@@ -178,7 +178,7 @@ class MessageDispatcher(ClientMessageSink):
       disp_msg.properties[Deadline.KEY] = deadline
 
     ar = AsyncResult()
-    sink_stack = ClientMessageSinkStack()
+    sink_stack = MessageSinkStack()
     repsonse_sink = _AsyncResponseSink()
     sink_stack.Push(repsonse_sink, (source, start_time, ar, disp_msg.properties))
     gevent.spawn(sink.AsyncProcessRequest, sink_stack, disp_msg, None, {})

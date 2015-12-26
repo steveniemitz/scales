@@ -32,7 +32,7 @@ class _HttpIface(object):
 class Http(object):
   @staticmethod
   def NewBuilder():
-    return Scales.NewBuilder(_HttpIface)\
+    return Scales.NewClientBuilder(_HttpIface)\
       .WithSink(ApertureBalancerSink.Builder())\
       .WithSink(SingletonPoolSink.Builder())\
       .WithSink(HttpTransportSink.Builder())

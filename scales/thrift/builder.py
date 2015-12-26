@@ -14,7 +14,7 @@ class Thrift(object):
 
   @staticmethod
   def NewBuilder(Iface):
-    return Scales.NewBuilder(Iface)\
+    return Scales.NewClientBuilder(Iface)\
       .WithSink(ThriftSerializerSink.Builder())\
       .WithSink(ApertureBalancerSink.Builder())\
       .WithSink(ResurrectorSink.Builder())\

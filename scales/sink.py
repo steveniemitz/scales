@@ -34,17 +34,18 @@ from .varz import (
   VarzSocketWrapper
 )
 
-class MessageSink(object):
+class Sink(object):
   """A base class for all message sinks.
 
   MessageSinks form a cooperative linked list, which each sink calling the
   next sink in the chain once it's processing is complete.
   """
   __metaclass__ = ABCMeta
-  __slots__ = '_next',
+  __slots__ = '_next', '_on_faulted'
 
   def __init__(self):
-    super(MessageSink, self).__init__()
+    super(Sink, self).__init__()
+    self._on_faulted = Observable()
     self._next = None
 
   @property
@@ -55,19 +56,6 @@ class MessageSink(object):
   @next_sink.setter
   def next_sink(self, value):
     self._next = value
-
-
-class ClientMessageSink(MessageSink):
-  """ClientMessageSinks take a message, stream, and headers and perform
-  processing on them.
-  """
-  __slots__ = '_on_faulted',
-  Role = None
-  Builder = None
-
-  def __init__(self):
-    self._on_faulted = Observable()
-    super(ClientMessageSink, self).__init__()
 
   @property
   def state(self):
@@ -102,6 +90,17 @@ class ClientMessageSink(MessageSink):
     if self.next_sink:
       self.next_sink.Close()
 
+
+class ClientMessageSink(Sink):
+  """ClientMessageSinks take a message, stream, and headers and perform
+  processing on them.
+  """
+  Role = None
+  Builder = None
+
+  def __init__(self):
+    super(ClientMessageSink, self).__init__()
+
   @abstractmethod
   def AsyncProcessRequest(self, sink_stack, msg, stream, headers):
     """Process a request message, stream, and headers.
@@ -131,12 +130,6 @@ class ClientMessageSink(MessageSink):
     raise NotImplementedError()
 
 
-class ServerMessageSink(ClientMessageSink):
-  pass
-
-class ServerChannelSink(object):
-  pass
-
 class SinkStack(object):
   """A stack of sinks."""
   __slots__ = '_stack',
@@ -164,7 +157,7 @@ class SinkStack(object):
     return any(self._stack)
 
 
-class ClientMessageSinkStack(SinkStack):
+class MessageSinkStack(SinkStack):
   """A SinkStack of ClientMessageSinks.
 
   The ClientMessageSinkStack forwards AsyncProcessResponse to the next sink
@@ -176,7 +169,7 @@ class ClientMessageSinkStack(SinkStack):
     Args:
       reply_sink - An optional ReplySink.
     """
-    super(ClientMessageSinkStack, self).__init__()
+    super(MessageSinkStack, self).__init__()
 
   def AsyncProcessResponse(self, stream, msg):
     """Pop the next sink off the stack and call AsyncProcessResponse on it."""
@@ -342,9 +335,11 @@ def SocketTransportSinkProvider(sink_cls):
     def CreateSink(self, properties):
       server = properties[SinkProperties.Endpoint]
       service = properties[SinkProperties.Label]
-      sock = ScalesSocket(server.host, server.port)
+      sock = properties.pop(SinkProperties.Socket, None)
+      if not sock:
+        sock = ScalesSocket(server.host, server.port)
       healthy_sock = VarzSocketWrapper(sock, service)
-      sink = self.SINK_CLS(healthy_sock, service)
+      sink = self.SINK_CLS(healthy_sock, service, self.next_provider, self.sink_properties, properties)
       return sink
 
     @property

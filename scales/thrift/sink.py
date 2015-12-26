@@ -68,7 +68,7 @@ class SocketTransportSink(ClientMessageSink):
       'transport_latency': AverageTimer
     }
 
-  def __init__(self, socket, source):
+  def __init__(self, socket, source, next_provider, sink_properties, global_properties):
     super(SocketTransportSink, self).__init__()
     self._socket = socket
     self._state = ChannelState.Idle

@@ -38,7 +38,7 @@ class MessageSerializer(object):
 
   def _Marshal_Tdispatch(self, msg, buf, headers):
     headers[TransportHeaders.MessageType] = MessageType.Tdispatch
-    MessageSerializer._WriteContext(msg.public_properties, buf)
+    self._WriteContext(msg.public_properties, buf)
     buf.write(pack('!hh', 0, 0)) # len(dst), len(dtab), both unsupported
     self._thrift_serializer.SerializeThriftCall(msg, buf)
 
@@ -70,15 +70,24 @@ class MessageSerializer(object):
 
   @staticmethod
   def _ReadContextTuple(buf):
-    for _ in range(2):
-      sz, = unpack('!h', buf.read(2))
-      buf.read(sz)
+    sz, = unpack('!h', buf.read(2))
+    key = buf.read(sz)
+    sz, = unpack('!h', buf.read(2))
+    value = buf.read(sz)
+
+    if key == "com.twitter.finagle.Deadline":
+      ts, timeout = unpack('!qq', value)
+      value = Deadline(timeout, ts)
+    return key, value
 
   @staticmethod
   def _ReadContext(buf):
     nctx, = unpack('!h', buf.read(2))
+    ret = {}
     for n in range(nctx):
-      MessageSerializer._ReadContextTuple(buf)
+      k, v = MessageSerializer._ReadContextTuple(buf)
+      ret[k] = v
+    return ret
 
   def _Unmarshal_Rdispatch(self, buf):
     status, nctx = unpack('!bh', buf.read(3))
@@ -98,10 +107,9 @@ class MessageSerializer(object):
     return MethodReturnMessage(error=ServerError(why))
 
   def _Unmarshal_Tdispatch(self, buf):
-    self._ReadContext(buf) #context
-    self._ReadContext(buf) #dst
-    self._ReadContext(buf) #dtab
-
+    ctx = self._ReadContext(buf)
+    dst = self._ReadContext(buf)
+    dtab = self._ReadContext(buf)
     return self._thrift_serializer.DeserializeThriftCallMessage(buf)
 
   def Unmarshal(self, tag, msg_type, buf):
@@ -111,9 +119,8 @@ class MessageSerializer(object):
       tag - The tag of the message.
       msg_type - The message type intended to be deserialized.
       buf - The stream to deserialize from.
-      ctx - The context from serialization.
     Returns:
-      A MethodReturnMessage.
+      A Message.
     """
     unmarshaller = self._unmarshal_map[msg_type]
     return unmarshaller(buf)
@@ -125,8 +132,6 @@ class MessageSerializer(object):
       msg - The message to serialize.
       buf - The stream to serialize into.
       headers - (out) Optional headers associated with the message.
-    Returns:
-      A context to be supplied during deserialization.
     """
     marshaller = self._marshal_map[msg.__class__]
     marshaller(msg, buf, headers)

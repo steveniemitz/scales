@@ -7,13 +7,13 @@ class Deadline(object):
   KEY = "__Deadline"
   EVENT_KEY = "__Deadline_Event"
 
-  def __init__(self, timeout):
+  def __init__(self, timeout, ts=None):
     """
     Args:
       timeout - The timeout in seconds
     """
     import  time
-    self._ts = long(time.time()) * 1000000000 # Nanoseconds
+    self._ts = ts or long(time.time()) * 1000000000 # Nanoseconds
     self._timeout = long(timeout * 1000000000)
 
 

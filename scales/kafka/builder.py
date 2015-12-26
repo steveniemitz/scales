@@ -21,7 +21,7 @@ class Kafka(object):
 
   @staticmethod
   def NewBuilder():
-    return Scales.NewBuilder(_KafkaIface) \
+    return Scales.NewClientBuilder(_KafkaIface) \
       .WithSink(KafkaRouterSink.Builder()) \
       .WithSink(HeapBalancerSink.Builder()) \
       .WithSink(KafkaSerializerSink.Builder()) \
