@@ -42,6 +42,7 @@ class ApertureBalancerTestCase(LoadBalancerTestCase):
     # (eg unwrapping should work)
     self.assertNotIsInstance(ar.value, ar.__class__)
     # Two sinks should now be active, the failed one and the successful one
+    self.sink.WaitForOpenComplete()
     self.assertEqual(self.sink._size, 2)
     # Only one should be open (since one failed)
     self.assertEqual(len([n for n in self.mock_provider.sinks_created

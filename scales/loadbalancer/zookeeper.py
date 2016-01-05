@@ -196,10 +196,16 @@ class ServerSet(object):
     self._cb_blocker = self._CallbackBlocker()
     self._member_filter = member_filter or true
     self._member_factory = member_factory or Member.from_node
-    gevent.spawn(self._notification_worker)
+    self._running = True
+    self._worker = gevent.spawn(self._notification_worker)
 
     if on_join or on_leave:
       self._monitor()
+
+  def stop(self):
+    self._running = False
+    if self._worker:
+      self._worker.kill(block=False)
 
   def __iter__(self):
     with self._cb_blocker:
@@ -281,7 +287,7 @@ class ServerSet(object):
     Having this in a worker prevents multiple updates from interleaving with
     each other, as _zk_nodes_to_members may yield.
     """
-    while True:
+    while self._running:
       work = self._notification_queue.get()
       self._cb_blocker.ensure_safe()
       try:
@@ -307,7 +313,6 @@ class ServerSet(object):
             self._on_join(m)
           except Exception:
             self._log.exception('Error in OnJoin callback.')
-
       except Exception:
         self._log.exception('Error in notification worker.')
 

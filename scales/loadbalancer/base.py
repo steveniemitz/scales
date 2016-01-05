@@ -2,14 +2,21 @@
 Load balancers track an underlying server set, and return a sink to service a
 request.
 """
-
+from abc import abstractmethod
 import functools
 import logging
 import random
 
+import gevent
 from gevent.event import Event
 
-from ..constants import (SinkProperties, SinkRole)
+from ..async import AsyncResult
+from ..constants import (
+  ChannelState,
+  SinkProperties,
+  SinkRole
+)
+from ..message import Deadline
 from ..sink import ClientMessageSink
 
 ROOT_LOG = logging.getLogger("scales.loadbalancer")
@@ -26,19 +33,86 @@ class LoadBalancerSink(ClientMessageSink):
     server_set_provider = sink_properties.server_set_provider
     log_name = self.__class__.__name__.replace('ChannelSink', '')
     self._log = ROOT_LOG.getChild('%s.[%s]' % (log_name, service_name))
-    self._init_done = Event()
+    self.__init_done = Event()
+    self.__open_done = Event()
     self._server_set_provider = server_set_provider
     self._endpoint_name = server_set_provider.endpoint_name
     self._next_sink_provider = next_provider
-    server_set_provider.Initialize(
-      self.__OnServerSetJoin,
-      self.__OnServerSetLeave)
-    server_set = server_set_provider.GetServers()
-    random.shuffle(server_set)
+    self._state = ChannelState.Idle
     self._servers = {}
-    [self.__AddServer(m) for m in server_set]
-    self._init_done.set()
+    self._open_greenlet = None
     super(LoadBalancerSink, self).__init__()
+
+  @property
+  def state(self):
+    return self._state
+
+  def Open(self):
+    self._state = ChannelState.Open
+    self._open_greenlet = gevent.spawn(self._OpenImpl)
+    return AsyncResult.Complete()
+
+  def _OpenImpl(self):
+    while self._state == ChannelState.Open:
+      try:
+        self._server_set_provider.Initialize(
+            self.__OnServerSetJoin,
+            self.__OnServerSetLeave)
+        server_set = self._server_set_provider.GetServers()
+      except gevent.GreenletExit:
+        return
+      except:
+        self._log.exception("Unable to initialize serverset, retrying in 5 seconds.")
+        gevent.sleep(5)
+        continue
+
+      random.shuffle(server_set)
+      self._servers = {}
+      [self.__AddServer(m) for m in server_set]
+      self.__init_done.set()
+      self._OpenInitialChannels()
+      self._open_greenlet = None
+      return True
+
+  @abstractmethod
+  def _OpenInitialChannels(self):
+    """To be overriden by subclasses.  Called after the ServerSet is initialized
+    and the initial set of servers has been loaded.
+    """
+    pass
+
+  def _OnOpenComplete(self):
+    """To be called by subclasses when they've completed (successfully or not)
+    opening their sinks.
+    """
+    self.__open_done.set()
+
+  def WaitForOpenComplete(self, timeout=None):
+    self.__open_done.wait(timeout)
+
+  def Close(self):
+    self._server_set_provider.Close()
+    self._state = ChannelState.Closed
+    self.__init_done.clear()
+    self.__open_done.clear()
+    if self._open_greenlet:
+      self._open_greenlet.kill(block=False)
+      self._open_greenlet = None
+
+  @abstractmethod
+  def _AsyncProcessRequestImpl(self, sink_stack, msg, stream, headers):
+    pass
+
+  def AsyncProcessRequest(self, sink_stack, msg, stream, headers):
+    if not self.__open_done.is_set():
+      def _on_open_done(_):
+        timeout_event = msg.properties.get(Deadline.EVENT_KEY, None)
+        # Either there is no timeout, or the timeout hasn't expired yet.
+        if not timeout_event or not timeout_event.Get():
+          self._AsyncProcessRequestImpl(sink_stack, msg, stream, headers)
+      self.__open_done.rawlink(_on_open_done)
+    else:
+      self._AsyncProcessRequestImpl(sink_stack, msg, stream, headers)
 
   def __GetEndpoint(self, instance):
     if self._endpoint_name:
@@ -97,7 +171,7 @@ class LoadBalancerSink(ClientMessageSink):
     # callbacks from the ServerSet are delivered serially, so we can guarantee
     # that once this unblocks, we'll still get the notifications delivered in
     # the order that they arrived.  Ex: OnJoin(a) -> OnLeave(a)
-    self._init_done.wait()
+    self.__init_done.wait()
     # OnJoin notifications are delivered at startup, however we already
     # pre-populate our copy of the ServerSet, so it's fine to ignore duplicates.
     if self.__GetEndpoint(instance) in self._servers:
@@ -111,7 +185,7 @@ class LoadBalancerSink(ClientMessageSink):
     Args:
       instance - Instance leaving the cluster.
     """
-    self._init_done.wait()
+    self.__init_done.wait()
     self.__RemoveServer(instance)
 
     self._log.info("Instance %s left (%d members)" % (

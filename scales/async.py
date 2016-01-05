@@ -118,7 +118,7 @@ class AsyncResult(g_AsyncResult):
     try:
       self.set(fn())
     except:
-      self.set_exception(sys.exc_info()[0])
+      self.set_exception(sys.exc_info()[1])
 
   def SafeLink(self, fn):
     """Propagate the result of calling fn() on a new greenlet to ar
@@ -137,7 +137,7 @@ class AsyncResult(g_AsyncResult):
           val = fn(_ar)
           cw_ar.set(val)
         except:
-          cw_ar.set_exception(sys.exc_info()[0])
+          cw_ar.set_exception(sys.exc_info()[1])
       if on_hub:
         run()
       else:

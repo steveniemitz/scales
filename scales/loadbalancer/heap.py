@@ -155,7 +155,7 @@ class HeapBalancerSink(LoadBalancerSink):
     self.__varz = self.HeapVarz(Source(service=service_name))
     super(HeapBalancerSink, self).__init__(next_provider, sink_properties, global_properties)
 
-  def AsyncProcessRequest(self, sink_stack, msg, stream, headers):
+  def _AsyncProcessRequestImpl(self, sink_stack, msg, stream, headers):
     if self._size == 0:
       channel = self._no_members
       self.__varz.no_members()
@@ -340,7 +340,7 @@ class HeapBalancerSink(LoadBalancerSink):
     else:
       self._RemoveSink(endpoint)
 
-  def _OnOpenComplete(self, ar, node):
+  def _OnOpenNodeComplete(self, ar, node):
     if ar.exception:
       self._log.error('Exception caught opening channel: %s' % str(ar.exception))
       return self._OnNodeDown(node)
@@ -348,19 +348,24 @@ class HeapBalancerSink(LoadBalancerSink):
       return ar
 
   def _OpenNode(self, n):
-    return n.channel.Open().ContinueWith(lambda ar: self._OnOpenComplete(ar, n)).Unwrap()
+    return n.channel \
+      .Open() \
+      .ContinueWith(lambda ar: self._OnOpenNodeComplete(ar, n)) \
+      .Unwrap()
 
-  def Open(self):
+  def _OpenInitialChannels(self):
     """Open the sink and all underlying nodes."""
     self._open = True
     if self._size > 0:
       # Ignore the first sink, it's the FailingChannelSink.
-      return AsyncResult.WhenAny([self._OpenNode(n) for n in self._heap[1:]])
+      AsyncResult.WhenAny([self._OpenNode(n) for n in self._heap[1:]])\
+        .ContinueWith(lambda _ar: self._OnOpenComplete())
     else:
-      return AsyncResult.Complete()
+      self._OnOpenComplete()
 
   def Close(self):
     """Close the sink and all underlying nodes immediately."""
+    super(HeapBalancerSink, self).Close()
     self._open = False
     [n.channel.Close() for n in self._heap]
 

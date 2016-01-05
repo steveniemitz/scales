@@ -31,6 +31,9 @@ class SinkTestCase(unittest.TestCase):
   def customize(self, **kwargs):
     pass
 
+  def _waitForSink(self):
+    pass
+
   def _createSink(self):
     return self.SINK_CLS(self.mock_provider, self.sink_properties, self.global_properties)
 
@@ -46,3 +49,4 @@ class SinkTestCase(unittest.TestCase):
     self.sink = self._createSink()
     self.sink.Open().wait()
     self._prepareSinkStack()
+    self._waitForSink()

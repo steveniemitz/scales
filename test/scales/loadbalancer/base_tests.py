@@ -6,6 +6,9 @@ class LoadBalancerTestCase(SinkTestCase):
   def _getLoadedNode(self):
     return next(n for n in self.sink._heap[1:] if n.load > self.sink.Idle)
 
+  def _waitForSink(self):
+    self.sink.WaitForOpenComplete()
+
   def customize(self):
     ss_provider = MockServerSetProvider()
     for p in (8080, 8081, 8082):

@@ -105,6 +105,9 @@ class MockServerSetProvider(ServerSetProvider):
     self._on_join = on_join
     self._on_leave = on_leave
 
+  def Close(self):
+    pass
+
   def AddServer(self, host, port):
     ep = ScalesUriParser.Endpoint(host, port)
     server = ScalesUriParser.Server(ep)

@@ -130,5 +130,8 @@ class MethodReturnMessage(Message):
       error_name = '%s.%s' % (error_module, error.__class__.__name__)
       stack = stack + traceback.format_exception_only(error_name, error.message)
       self.stack = stack
+      # Prevent circular references
+      del frame
+      del tb
     else:
       self.stack = None

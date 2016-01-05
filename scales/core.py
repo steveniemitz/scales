@@ -54,7 +54,10 @@ class ClientProxyBuilder(object):
         return ar if async else ar.get()
       return _ProxyMethod
 
-    is_user_method = lambda m: inspect.ismethod(m) and not inspect.isbuiltin(m)
+    is_user_method = lambda m: (inspect.ismethod(m)
+                                and not inspect.isbuiltin(m)
+                                and not m.func_name.startswith('__')
+                                and not m.func_name.endswith('__'))
 
     # Get all methods defined on the interface.
     iface_methods = { m[0]: ProxyMethod(*m)
