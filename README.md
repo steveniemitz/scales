@@ -25,6 +25,19 @@ The HTTP client is the simplest type, you give it a URI (see service discovery b
 ## Service Discovery
 Out of the box, scales uses the `ScalesUriParser` to parse the URIs passed to NewClient.  The `ScalesUriParser` supports two protocols, `tcp://` to create a static serverset of host:port pairs (for example `tcp://localhost:8080,localhost:8081`), and `zk://` to create a dynamic serverset based on a ZooKeeper node.  ZooKeeper URIs should be in the form of `zk://zk_server1:port,zk_server2:port/full/znode/path`.
 
+## Monitoring / Metrics
+Scales provides an internal metrics tracking system called Varz.  A component in scales.varz called the VarzReceiver handles tracking and aggregating metrics.  This component can be used as-is, or replaced at runtime via monkey patching to integrate with a custom metrics system.
+ 
+In addition, a helper class, VarzAggregator, can be used to generate varz aggregations.  By default metrics are aggregated to the service level, however this can be customized by passing in a custom key selector to Aggregate.
+
+For example:
+
+```python
+aggregated_varz = VarzAggregator.Aggregate(
+    VarzReceiver.VARZ_DATA,
+    VarzReceiver.VARZ_METRICS)
+```
+
 # Class Hierarchy
 ## Core
 The scales core is composed of 4 modules
