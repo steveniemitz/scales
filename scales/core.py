@@ -26,7 +26,7 @@ class _ProxyBase(object):
       pass
 
   def DispatcherOpen(self):
-    self._dispatcher.Open()
+    return self._dispatcher.Open()
 
   def DispatcherClose(self):
     self._dispatcher.Close()
@@ -152,6 +152,7 @@ class Scales(object):
       self._client_provider = ClientProxyBuilder()
       self._properties = {}
       self._stack = []
+      self._open_timeout = None
 
     @property
     def name(self):
@@ -187,6 +188,16 @@ class Scales(object):
         timeout - A timeout in seconds.
       """
       self._timeout = timeout
+      return self
+
+    def SetOpenTimeout(self, timeout):
+      """Sets the open timeout.
+
+      Args:
+        timeout - A timeout in seconds.  If 0, there is no wait, if None, the
+                  wait is infinite.
+      """
+      self._open_timeout = timeout
       return self
 
     def SetClientProvider(self, client_provider):
@@ -278,7 +289,9 @@ class Scales(object):
 
       proxy_cls = self._client_provider.CreateServiceClient(self._service)
       proxy_obj = proxy_cls(dispatcher)
-      proxy_obj.DispatcherOpen()
+      evt = proxy_obj.DispatcherOpen()
+      if self._open_timeout != 0:
+        evt.wait(self._open_timeout)
       return proxy_obj
 
   @staticmethod

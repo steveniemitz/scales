@@ -34,13 +34,13 @@ class LoadBalancerSink(ClientMessageSink):
     log_name = self.__class__.__name__.replace('ChannelSink', '')
     self._log = ROOT_LOG.getChild('%s.[%s]' % (log_name, service_name))
     self.__init_done = Event()
-    self.__open_done = Event()
+    self.__open_ar = None
+    self.__open_greenlet = None
     self._server_set_provider = server_set_provider
     self._endpoint_name = server_set_provider.endpoint_name
     self._next_sink_provider = next_provider
     self._state = ChannelState.Idle
     self._servers = {}
-    self._open_greenlet = None
     super(LoadBalancerSink, self).__init__()
 
   @property
@@ -48,12 +48,15 @@ class LoadBalancerSink(ClientMessageSink):
     return self._state
 
   def Open(self):
-    self._state = ChannelState.Open
-    self._open_greenlet = gevent.spawn(self._OpenImpl)
-    return AsyncResult.Complete()
+    if self.__open_ar:
+      return self.__open_ar
+
+    self.__open_ar = AsyncResult()
+    self.__open_greenlet = gevent.spawn(self._OpenImpl)
+    return self.__open_ar
 
   def _OpenImpl(self):
-    while self._state == ChannelState.Open:
+    while self._state != ChannelState.Closed:
       try:
         self._server_set_provider.Initialize(
             self.__OnServerSetJoin,
@@ -72,6 +75,7 @@ class LoadBalancerSink(ClientMessageSink):
       self.__init_done.set()
       self._OpenInitialChannels()
       self._open_greenlet = None
+      self._state = ChannelState.Open
       return True
 
   @abstractmethod
@@ -85,32 +89,32 @@ class LoadBalancerSink(ClientMessageSink):
     """To be called by subclasses when they've completed (successfully or not)
     opening their sinks.
     """
-    self.__open_done.set()
+    self.__open_ar.set(True)
 
   def WaitForOpenComplete(self, timeout=None):
-    self.__open_done.wait(timeout)
+    self.__open_ar.wait(timeout)
 
   def Close(self):
     self._server_set_provider.Close()
     self._state = ChannelState.Closed
     self.__init_done.clear()
-    self.__open_done.clear()
-    if self._open_greenlet:
-      self._open_greenlet.kill(block=False)
-      self._open_greenlet = None
+    if self.__open_greenlet:
+      self.__open_greenlet.kill(block=False)
+      self.__open_greenlet = None
+    self.__open_ar = None
 
   @abstractmethod
   def _AsyncProcessRequestImpl(self, sink_stack, msg, stream, headers):
     pass
 
   def AsyncProcessRequest(self, sink_stack, msg, stream, headers):
-    if not self.__open_done.is_set():
+    if not self.__open_ar.ready():
       def _on_open_done(_):
         timeout_event = msg.properties.get(Deadline.EVENT_KEY, None)
         # Either there is no timeout, or the timeout hasn't expired yet.
         if not timeout_event or not timeout_event.Get():
           self._AsyncProcessRequestImpl(sink_stack, msg, stream, headers)
-      self.__open_done.rawlink(_on_open_done)
+      self.__open_ar.rawlink(_on_open_done)
     else:
       self._AsyncProcessRequestImpl(sink_stack, msg, stream, headers)
 
