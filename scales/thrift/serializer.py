@@ -8,7 +8,7 @@ from thrift.Thrift import (
   TMessageType
 )
 
-from ..constants import MessageProperties
+from ..constants import MessageProperties, TransportHeaders
 from ..message import (
   MethodCallMessage,
   MethodReturnMessage
@@ -81,17 +81,17 @@ class MessageSerializer(object):
     thrift_args.write(protocol)
     protocol.writeMessageEnd()
 
-  def SerializeThriftResponse(self, msg, buf):
+  def SerializeThriftResponse(self, msg, buf, headers):
     thrift_buffer = TMemoryBuffer()
     thrift_buffer._buffer = buf
     protocol = self._protocol_factory.getProtocol(thrift_buffer)
 
-    ret_cls = self._FindClass('%s_result' % msg.properties[MessageProperties.ThriftMethod])
+    ret_cls = self._FindClass('%s_result' % headers[TransportHeaders.ThriftMethod])
 
     protocol.writeMessageBegin(
-      msg.properties[MessageProperties.ThriftMethod],
+      headers[TransportHeaders.ThriftMethod],
       TMessageType.REPLY,
-      msg.properties[MessageProperties.ThriftSequenceId])
+      headers[TransportHeaders.ThriftSequenceId])
     ret_msg = ret_cls(msg.return_value)
     ret_msg.write(protocol)
     protocol.writeMessageEnd()
@@ -104,7 +104,7 @@ class MessageSerializer(object):
     (fn_name, msg_type, seq_id) = protocol.readMessageBegin()
     return fn_name, msg_type, protocol, seq_id
 
-  def DeserializeThriftCallMessage(self, buf):
+  def DeserializeThriftCallMessage(self, buf, headers):
     """Deserialize a stream to a MethodCallMessage.
 
     Args:
@@ -125,9 +125,9 @@ class MessageSerializer(object):
       args_data = object()
     protocol.readMessageEnd()
 
-    mcm = MethodCallMessage(self._service_cls, fn_name, [], args_data.__dict__)
-    mcm.properties[MessageProperties.ThriftSequenceId] = seq_id
-    return mcm
+    headers[TransportHeaders.ThriftSequenceId] = seq_id
+    headers[TransportHeaders.ThriftMethod] = fn_name
+    return MethodCallMessage(self._service_cls, fn_name, [], args_data.__dict__)
 
   def DeserializeThriftReturnMessage(self, buf):
     """Deserialize a stream and context to a MethodReturnMessage.

@@ -1,20 +1,23 @@
 """Base classes for Message processing."""
 
+import time
 import sys
 import traceback
 
 class Deadline(object):
+  HEADER_KEY = "com.twitter.finagle.Deadline"
   KEY = "__Deadline"
   EVENT_KEY = "__Deadline_Event"
+
+  NS_PER_SECOND = 1000000000
 
   def __init__(self, timeout, ts=None):
     """
     Args:
       timeout - The timeout in seconds
     """
-    import  time
-    self._ts = ts or long(time.time()) * 1000000000 # Nanoseconds
-    self._timeout = long(timeout * 1000000000)
+    self.ts = ts or long(time.time()) * self.NS_PER_SECOND # Nanoseconds
+    self.timeout = long(timeout * self.NS_PER_SECOND)
 
 
 class ClientError(Exception): pass

@@ -52,7 +52,7 @@ class MessageSerializer(object):
     headers[TransportHeaders.MessageType] = MessageType.Rdispatch
     buf.write(pack('!b', Rstatus.OK))
     MessageSerializer._WriteContext(msg.public_properties, buf)
-    self._thrift_serializer.SerializeThriftResponse(msg, buf)
+    self._thrift_serializer.SerializeThriftResponse(msg, buf, headers)
 
   @staticmethod
   def _WriteContext(ctx, buf):
@@ -64,7 +64,7 @@ class MessageSerializer(object):
       buf.write(pack('!h%ds' % k_len, k_len, k))
       if isinstance(v, Deadline):
         buf.write(pack('!h', 16))
-        buf.write(pack('!qq', v._ts, v._timeout))
+        buf.write(pack('!qq', v.ts, v.timeout))
       else:
         raise NotImplementedError("Unsupported value type in context.")
 
@@ -75,7 +75,7 @@ class MessageSerializer(object):
     sz, = unpack('!h', buf.read(2))
     value = buf.read(sz)
 
-    if key == "com.twitter.finagle.Deadline":
+    if key == Deadline.HEADER_KEY:
       ts, timeout = unpack('!qq', value)
       value = Deadline(timeout, ts)
     return key, value
@@ -89,7 +89,7 @@ class MessageSerializer(object):
       ret[k] = v
     return ret
 
-  def _Unmarshal_Rdispatch(self, buf):
+  def _Unmarshal_Rdispatch(self, buf, headers):
     status, nctx = unpack('!bh', buf.read(3))
     for n in range(0, nctx):
       self._ReadContextTuple(buf)
@@ -102,17 +102,19 @@ class MessageSerializer(object):
       return MethodReturnMessage(error=ServerError(buf.read()))
 
   @staticmethod
-  def _Unmarshal_Rerror(buf):
+  def _Unmarshal_Rerror(buf, headers):
     why = buf.read()
     return MethodReturnMessage(error=ServerError(why))
 
-  def _Unmarshal_Tdispatch(self, buf):
+  def _Unmarshal_Tdispatch(self, buf, headers):
     ctx = self._ReadContext(buf)
     dst = self._ReadContext(buf)
     dtab = self._ReadContext(buf)
-    return self._thrift_serializer.DeserializeThriftCallMessage(buf)
+    msg = self._thrift_serializer.DeserializeThriftCallMessage(buf, headers)
+    headers.update(ctx)
+    return msg
 
-  def Unmarshal(self, tag, msg_type, buf):
+  def Unmarshal(self, tag, msg_type, buf, headers):
     """Deserialize a message from a stream.
 
     Args:
@@ -123,7 +125,7 @@ class MessageSerializer(object):
       A Message.
     """
     unmarshaller = self._unmarshal_map[msg_type]
-    return unmarshaller(buf)
+    return unmarshaller(buf, headers)
 
   def Marshal(self, msg, buf, headers):
     """Serialize a message into a stream.

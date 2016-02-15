@@ -24,8 +24,6 @@ class SinkProperties(object):
 
 class MessageProperties(object):
   Endpoint = '__Endpoint'
-  ThriftMethod = '__ThriftMethod'
-  ThriftSequenceId = '__ThriftSeqId'
 
 class SinkRole(object):
   Transport = 'transport'
@@ -35,3 +33,5 @@ class SinkRole(object):
 
 class TransportHeaders(object):
   MessageType = '__MessageType'
+  ThriftMethod = '__ThriftMethod'
+  ThriftSequenceId = '__ThriftSeqId'

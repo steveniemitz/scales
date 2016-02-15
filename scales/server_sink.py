@@ -1,13 +1,16 @@
 from abc import abstractmethod
 import logging
 
-import gevent
+import time
+from gevent import GreenletExit
 
 from .async import AsyncResult, NamedGreenlet
-from .message import MethodReturnMessage
+from .constants import ChannelState
+from .message import Deadline, MethodReturnMessage, TimeoutError
 from .scales_socket import ScalesSocket
 from .sink import (
   ClientMessageSink,
+  ClientTimeoutSink,
   Sink,
   SinkProperties,
   SinkProvider,
@@ -37,9 +40,19 @@ class ServerChannelSink(Sink):
   def Close(self):
     pass
 
+
+class ServerTimeoutSink(ClientTimeoutSink):
+  def _TimeoutHelper(self, evt, sink_stack):
+    if evt:
+      evt.Set(True)
+    self._varz.timeouts()
+
+
 class ServerCallBuilderSink(ServerMessageSink):
   def __init__(self, next_provider, sink_properties, global_properties):
     super(ServerCallBuilderSink, self).__init__()
+    if next_provider:
+      raise Exception("ServerCallBuilderSink must be the last sink in the chain.")
     self._handler = sink_properties.handler
 
   def AsyncProcessRequest(self, sink_stack, msg, stream, headers):
@@ -84,18 +97,28 @@ class TcpServerChannel(ServerChannelSink):
     self._clients = {}
     self._next_provider = next_provider
     self._global_properties = global_properties
+    self._state = ChannelState.Idle
     self._log = self.SINK_LOG.getChild('[%s.%s:%d]' % (
       service, socket.host, socket.port))
 
+  def state(self):
+    return self._state
+
   def _AcceptLoop(self):
     while True:
+      client_socket, addr = None, None
       try:
         client_socket, addr = self._socket.accept()
-        self._log.info("Accepted connection from client %s", str(addr))
-
         # Create a scales socket
         client_socket = ScalesSocket.fromAccept(client_socket, addr)
+        self._log.info("Accepted connection from client %s", str(addr))
+      except GreenletExit:
+        return
+      except:
+        self._log.exception("Error calling accept, dropping connection.")
+        continue
 
+      try:
         # Init properties to launch the new sink
         new_props = self._global_properties.copy()
         new_props[SinkProperties.Socket] = client_socket
@@ -103,10 +126,19 @@ class TcpServerChannel(ServerChannelSink):
 
         # Set up the client fault handler to correctly remove the client
         self._clients[addr] = client
-        client.on_faulted.Subscribe(lambda _: self._clients.pop(addr, None), True)
+        client.on_faulted.Subscribe(lambda _: self._CloseClient(addr), True)
         client.Open()
+      except GreenletExit:
+        return
       except:
-        self._log.exception("Error calling accept()")
+        self._log.exception("Error setting up sink chain for new client %s", str(addr))
+        client_socket.close()
+
+  def _CloseClient(self, addr):
+    client = self._clients.pop(addr, None)
+    if not client:
+      self._log.warn("Unable to find client for address %s.", addr)
+      return
 
   def Open(self):
     if not self._acceptor:
@@ -119,6 +151,18 @@ class TcpServerChannel(ServerChannelSink):
     return AsyncResult.Complete()
 
   def Close(self):
+    if self.state != ChannelState.Open:
+      return
+
+    self._state = ChannelState.Closed
+    if self._acceptor:
+      self._acceptor.kill(block=False)
+
+    for addr, c in self._clients.items():
+      c.Close()
+
+    self._acceptor = None
+    self._clients = {}
     self.close_event.set(None)
 
 TcpServerChannel.Builder = SocketTransportSinkProvider(TcpServerChannel)

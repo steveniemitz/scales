@@ -1,7 +1,7 @@
 import logging
 from cStringIO import StringIO
 
-from ..constants import ConnectionRole, SinkProperties, MessageProperties
+from ..constants import ConnectionRole, SinkProperties, MessageProperties, TransportHeaders
 from ..message import MethodReturnMessage
 from ..mux.sink import MuxSocketTransportSink
 from ..sink import SinkProvider, MessageSinkStack, SocketTransportSinkProvider
@@ -62,21 +62,23 @@ ThriftMuxServerSocketTransportSink.Builder = SocketTransportSinkProvider(ThriftM
 
 class ThriftMuxServerMessageSerializerSink(ThriftMuxMessageSerializerSink):
   def AsyncProcessRequest(self, sink_stack, msg, stream, headers):
-    msg = self._DeserializeStream(stream, sink_stack)
+    msg = self._DeserializeStream(stream, headers)
     if isinstance(msg, MethodReturnMessage):
       sink_stack.AsyncProcessResponseMessage(msg)
       return
 
-    sink_stack.Push(self, (msg.method, msg.properties[MessageProperties.ThriftSequenceId]))
+    deadline = headers.get(Deadline.KEY)
+
+    sink_stack.Push(self, headers)
     self.next_sink.AsyncProcessRequest(sink_stack, msg, stream, headers)
 
   def AsyncProcessResponse(self, sink_stack, context, stream, msg):
     buf = StringIO()
     headers = {}
+    recv_headers = context
 
-    method_name, seq_id = context
-    msg.properties[MessageProperties.ThriftMethod] = method_name
-    msg.properties[MessageProperties.ThriftSequenceId] = seq_id
+    headers[TransportHeaders.ThriftMethod] = recv_headers[TransportHeaders.ThriftMethod]
+    headers[TransportHeaders.ThriftSequenceId] = recv_headers[TransportHeaders.ThriftSequenceId]
     self._serializer.Marshal(msg, buf, headers)
     sink_stack.AsyncProcessResponseStream(buf)
 

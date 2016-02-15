@@ -173,7 +173,7 @@ class ThriftMuxMessageSerializerSink(ClientMessageSink):
 
     deadline = msg.properties.get(Deadline.KEY)
     if deadline:
-      msg.properties['com.twitter.finagle.Deadline'] = Deadline(deadline)
+      msg.properties[Deadline.HEADER_KEY] = Deadline(deadline)
 
     try:
       self._serializer.Marshal(msg, buf, headers)
@@ -187,10 +187,10 @@ class ThriftMuxMessageSerializerSink(ClientMessageSink):
     sink_stack.Push(self)
     self.next_sink.AsyncProcessRequest(sink_stack, msg, buf, headers)
 
-  def _DeserializeStream(self, stream, sink_stack):
+  def _DeserializeStream(self, stream, headers):
     try:
       msg_type, tag = ThriftMuxMessageSerializerSink.ReadHeader(stream)
-      msg = self._serializer.Unmarshal(tag, msg_type, stream)
+      msg = self._serializer.Unmarshal(tag, msg_type, stream, headers)
       self._varz.message_bytes_recv(stream.tell())
     except Exception as ex:
       self._varz.deserialization_failures()
@@ -201,7 +201,7 @@ class ThriftMuxMessageSerializerSink(ClientMessageSink):
     if msg:
       sink_stack.AsyncProcessResponseMessage(msg)
     else:
-      msg = self._DeserializeStream(stream, sink_stack)
+      msg = self._DeserializeStream(stream, {})
       sink_stack.AsyncProcessResponseMessage(msg)
 
 ThriftMuxMessageSerializerSink.Builder = SinkProvider(ThriftMuxMessageSerializerSink)
