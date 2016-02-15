@@ -6,3 +6,4 @@ Vagrantfile
 *.ipr
 *.iws
 integration_test/test_pynagle.py
+.idea/
