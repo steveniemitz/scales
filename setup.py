@@ -2,13 +2,14 @@ from setuptools import setup
 
 setup(
   name='scales-rpc',
-  version='1.0.3',
+  version='1.0.4',
   author='Steve Niemitz',
   author_email='sniemitz@twitter.com',
   url='https://www.github.com/steveniemitz/scales',
   summary='A generic python RPC client framework.',
   packages=['scales',
             'scales.http',
+            'scales.kafka',
             'scales.loadbalancer',
             'scales.mux',
             'scales.pool',
