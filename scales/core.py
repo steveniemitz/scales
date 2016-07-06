@@ -266,7 +266,7 @@ class Scales(object):
       # stack (if one exists)
       for n, p in enumerate(self._stack):
         if p.Role == SinkRole.LoadBalancer and p.sink_properties is not None:
-          new_params_dct = p.sink_properties.__dict__.copy()
+          new_params_dct = p.sink_properties._asdict().copy()
           new_params_dct['server_set_provider'] = self._server_set_provider
           p.sink_properties = p.PARAMS_CLASS(**new_params_dct)
           break
