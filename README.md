@@ -54,7 +54,7 @@ A message is an envelope to carry some data.  In scales, there are two main mess
 Sinks are the core message processing unit of scales.  In scales, every layer of the RPC stack is a sink.
 Some examples of sinks are:
 
-* **Serializer)** sinks handle serializing a `Message` object into a stream.
+* **Serializer** sinks handle serializing a `Message` object into a stream.
 * **Transport** sinks handle sending and receiving data over a transport (socket, HTTP, etc)
 * **Dispatch** sinks handles initiating a method call, and is called by the tranparent client proxy.
 
