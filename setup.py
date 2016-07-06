@@ -6,6 +6,7 @@ setup(
   author='Steve Niemitz',
   author_email='sniemitz@twitter.com',
   url='https://www.github.com/steveniemitz/scales',
+  description='A python RPC client stack',
   summary='A generic python RPC client framework.',
   license='MIT License',
   packages=['scales',
