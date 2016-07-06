@@ -288,7 +288,12 @@ class SinkProviderBase(object):
 
   def Clone(self, **kwargs):
     """Creates a copy of this sink_provider with new properties"""
-    new_props = self.sink_properties.__dict__.copy()
+    if hasattr(self.sink_properties, '_asdict'):
+      new_props = self.sink_properties._asdict().copy()
+    elif hasattr(self.sink_properties, '__dict__'):
+      new_props = self.sink_properties.__dict__.copy()
+    else:
+      raise AttributeError('unable to copy sink_properties')
     new_props.update(kwargs)
     new_provider = type(self)(**new_props)
     new_provider.next_provider = self.next_provider
