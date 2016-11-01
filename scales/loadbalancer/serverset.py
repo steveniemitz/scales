@@ -1,9 +1,8 @@
 from abc import (ABCMeta, abstractmethod)
 
-class ServerSetProvider(object):
+class ServerSetProvider(ABCMeta('ABCMeta', (object,), {})):
   """Base class for providing a set of servers, as well as optionally
   notifying the pool of servers joining and leaving the set."""
-  __metaclass__ = ABCMeta
 
   @abstractmethod
   def Initialize(self, on_join, on_leave):

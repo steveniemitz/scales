@@ -34,13 +34,12 @@ from .varz import (
   VarzSocketWrapper
 )
 
-class MessageSink(object):
+class MessageSink(ABCMeta('ABCMeta', (object,), {})):
   """A base class for all message sinks.
 
   MessageSinks form a cooperative linked list, which each sink calling the
   next sink in the chain once it's processing is complete.
   """
-  __metaclass__ = ABCMeta
   __slots__ = '_next',
 
   def __init__(self):

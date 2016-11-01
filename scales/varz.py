@@ -130,7 +130,7 @@ def VerifySource(source):
     raise ValueError("InvalidSource", source)
   return source
 
-class VarzBase(object):
+class _VarzBase(object):
   """A helper class to create a set of Varz.
 
   Inheritors should set _VARZ_BASE_NAME.  Once done, the Varz object can be
@@ -150,7 +150,6 @@ class VarzBase(object):
     my_varz.a_gauge(5)
   """
 
-  __metaclass__ = VarzMeta
   _VARZ = {}
   _VARZ_BASE_NAME = None
 
@@ -161,6 +160,15 @@ class VarzBase(object):
 
   def __getattr__(self, item):
     return self._VARZ[item]
+
+VarzBase = VarzMeta(
+  '_VarzBase',
+  (_VarzBase,),
+  {
+    '_VARZ_BASE_NAME': _VarzBase._VARZ_BASE_NAME,
+    '_VARZ': _VarzBase._VARZ
+  }
+)
 
 class _SampleSet(object):
   __slots__ = ('data', 'i', 'p', 'max_size', 'last_update')
