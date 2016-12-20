@@ -11,7 +11,7 @@ A protocol agnostic RPC client stack for python.
 * Service discovery via ZooKeeper
 
 ## Getting started
-Using getting start with scales is very simple.  For example, lets use it to do an HTTP GET of www.google.com
+Getting started with scales is very simple.  For example, lets use it to do an HTTP GET of www.google.com
 
 ```python
 from scales.http import Http
