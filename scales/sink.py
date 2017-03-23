@@ -15,7 +15,10 @@ from collections import (deque, namedtuple)
 from weakref import WeakValueDictionary
 import time
 
-from gevent.coros import RLock
+try:
+  from gevent.coros import RLock
+except:
+  from gevent.lock import RLock
 
 from .async import AsyncResult
 from .constants import (ChannelState, SinkProperties, SinkRole)
