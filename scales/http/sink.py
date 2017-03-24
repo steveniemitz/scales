@@ -106,6 +106,8 @@ class HttpTransportSink(HttpTransportSinkBase):
       response = self._session.post(url, **kwargs)
     elif method == 'put':
       response = self._session.put(url, **kwargs)
+    elif method == 'delete':
+      response = self._session.delete(url, **kwargs)
     else:
       raise NotImplementedError()
     return response

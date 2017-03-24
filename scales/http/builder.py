@@ -28,6 +28,13 @@ class _HttpIface(object):
     """
     pass
 
+  def Delete(self, url, **kwargs):
+    """Issue an HTTP DELETE to url.
+
+    kwargs aligns with arguments to requests, although timeout is ignored.
+    """
+    pass
+
 
 class Http(object):
   @staticmethod
