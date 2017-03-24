@@ -21,7 +21,7 @@ setup(
             'scales.thriftmux'],
   install_requires=[
       'gevent>=0.13.8',
-      'thrift>=0.5.0',
+      'thrift>=0.5.0,<=0.9.3',
       'kazoo>=1.3.1',
       'requests>=2.0.0']
 )
