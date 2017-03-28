@@ -108,6 +108,12 @@ class HttpTransportSink(HttpTransportSinkBase):
       response = self._session.put(url, **kwargs)
     elif method == 'delete':
       response = self._session.delete(url, **kwargs)
+    elif method == 'patch':
+      response = self._session.patch(url, **kwargs)
+    elif method == 'head':
+      response = self._session.head(url, **kwargs)
+    elif method == 'options':
+      response = self._session.options(url, **kwargs)
     else:
       raise NotImplementedError()
     return response

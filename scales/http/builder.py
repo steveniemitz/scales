@@ -35,6 +35,27 @@ class _HttpIface(object):
     """
     pass
 
+  def Patch(self, url, **kwargs):
+    """Issue an HTTP PATCH to url.
+
+    kwargs aligns with arguments to requests, although timeout is ignored.
+    """
+    pass
+
+  def Head(self, url, **kwargs):
+    """Issue an HTTP HEAD to url.
+
+    kwargs aligns with arguments to requests, although timeout is ignored.
+    """
+    pass
+
+  def Options(self, url, **kwargs):
+    """Issue an HTTP OPTIONS to url.
+
+    kwargs aligns with arguments to requests, although timeout is ignored.
+    """
+    pass
+
 
 class Http(object):
   @staticmethod
