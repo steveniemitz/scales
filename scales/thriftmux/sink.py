@@ -210,3 +210,24 @@ class ThriftMuxMessageSerializerSink(ClientMessageSink):
       sink_stack.AsyncProcessResponseMessage(msg)
 
 ThriftMuxMessageSerializerSink.Builder = SinkProvider(ThriftMuxMessageSerializerSink)
+
+class ClientIdInterceptorSink(ClientMessageSink):
+  __slots__ = '_client_id',
+
+  CLIENT_ID_HEADER = 'com.twitter.finagle.thrift.ClientIdContext'
+
+  def __init__(self, next_provider, sink_properties, global_properties):
+    super(ClientIdInterceptorSink, self).__init__()
+    self._client_id = sink_properties.client_id
+    self.next_sink = next_provider.CreateSink(global_properties)
+
+  def AsyncProcessRequest(self, sink_stack, msg, stream, headers):
+    msg.properties[self.CLIENT_ID_HEADER] = self._client_id
+    self.next_sink.AsyncProcessRequest(sink_stack, msg, stream, headers)
+
+  def AsyncProcessResponse(self, sink_stack, context, stream, msg):
+    raise NotImplementedError("This should never be called")
+
+ClientIdInterceptorSink.Builder = SinkProvider(
+  ClientIdInterceptorSink,
+  client_id='client')
