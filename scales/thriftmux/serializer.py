@@ -55,6 +55,9 @@ class MessageSerializer(object):
       if isinstance(v, Deadline):
         buf.write(pack('!h', 16))
         buf.write(pack('!qq', v._ts, v._timeout))
+      elif isinstance(v, basestring):
+        v_len = len(v)
+        buf.write(pack('!h%ds' % v_len, v_len, v))
       else:
         raise NotImplementedError("Unsupported value type in context.")
 
