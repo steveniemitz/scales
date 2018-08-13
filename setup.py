@@ -20,8 +20,8 @@ setup(
             'scales.thrifthttp',
             'scales.thriftmux'],
   install_requires=[
-      'gevent>=0.13.8',
+      'gevent>=1.3.0',
       'thrift>=0.5.0',
-      'kazoo>=1.3.1',
+      'kazoo>=2.5.0',
       'requests>=2.0.0']
 )
