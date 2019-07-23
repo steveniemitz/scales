@@ -2,7 +2,7 @@ from setuptools import setup
 
 setup(
   name='scales-rpc',
-  version='1.1.2',
+  version='1.1.3',
   author='Steve Niemitz',
   author_email='sniemitz@twitter.com',
   url='https://www.github.com/steveniemitz/scales',
