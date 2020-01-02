@@ -5,7 +5,7 @@ import gevent
 import requests
 from requests import exceptions
 
-from ..async import AsyncResult
+from ..asynchronous import AsyncResult
 from ..constants import ChannelState, SinkProperties
 from ..sink import (ClientMessageSink, SinkProvider)
 from ..message import (Deadline, MethodReturnMessage, TimeoutError)

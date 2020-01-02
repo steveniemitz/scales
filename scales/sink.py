@@ -20,7 +20,7 @@ try:
 except:
   from gevent.lock import RLock
 
-from .async import AsyncResult
+from .asynchronous import AsyncResult
 from .constants import (ChannelState, SinkProperties, SinkRole)
 from .observable import Observable
 from .message import (
@@ -209,7 +209,9 @@ class FailingMessageSink(ClientMessageSink):
   def endpoint(self):
     return None
 
+
 class ClientTimeoutSink(ClientMessageSink):
+
   class Varz(VarzBase):
     _VARZ_BASE_NAME = 'scales.TimeoutSink'
     _VARZ = {
@@ -333,7 +335,9 @@ def SinkProvider(sink_cls, role=None, **defaults):
   )
   return provider
 
+
 TimeoutSinkProvider = SinkProvider(ClientTimeoutSink)
+
 
 def SocketTransportSinkProvider(sink_cls):
   class _SocketTransportSinkProvider(SinkProviderBase):
@@ -353,6 +357,7 @@ def SocketTransportSinkProvider(sink_cls):
       return self.SINK_CLS
 
   return _SocketTransportSinkProvider
+
 
 class RefCountedSink(ClientMessageSink):
   def __init__(self, next_sink):
@@ -387,6 +392,7 @@ class RefCountedSink(ClientMessageSink):
       if self._ref_count == 0:
         self._open_ar = None
         self.next_sink.Close()
+
 
 class SharedSinkProvider(SinkProviderBase):
   def __init__(self, key_selector):

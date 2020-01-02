@@ -3,15 +3,13 @@ from __future__ import absolute_import
 from thrift.protocol.TJSONProtocol import TJSONProtocol, JTYPES, CTYPES
 from thrift.Thrift import TType
 
-try:
-  from cStringIO import StringIO
-except ImportError:
-  from StringIO import StringIO
+from ..compat import BytesIO
 
 try:
   import simplejson as json
 except ImportError:
   import json
+
 
 class TFastJSONProtocol(TJSONProtocol):
   class InitContext(object):
@@ -155,7 +153,7 @@ class TFastJSONProtocol(TJSONProtocol):
     self._ctx.write(curr)
 
   def _readTransport(self):
-    js = StringIO()
+    js = BytesIO()
     while True:
       data = self.trans.read(4096)
       if not data:
@@ -236,6 +234,7 @@ class TFastJSONProtocol(TJSONProtocol):
     self._ctx.write(number)
 
   writeJSONNumber = writeJSONString
+
 
 class TFastJSONProtocolFactory(object):
   def getProtocol(self, trans):

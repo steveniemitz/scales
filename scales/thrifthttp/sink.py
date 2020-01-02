@@ -1,9 +1,9 @@
 from thrift.transport.TTransport import TTransportBase
 
-from cStringIO import StringIO
-
+from ..compat import BytesIO
 from ..http.sink import HttpTransportSinkBase
 from ..sink import SinkProvider
+
 
 class _ResponseReader(TTransportBase):
   CHUNK_SIZE = 4096
@@ -11,7 +11,7 @@ class _ResponseReader(TTransportBase):
   def __init__(self, response, varz):
     self._stream = response.raw
     self._varz = varz
-    self._rbuf = StringIO('')
+    self._rbuf = BytesIO()
 
   def _read_stream(self, sz):
     return self._stream.read(sz, decode_content=True)
@@ -21,14 +21,14 @@ class _ResponseReader(TTransportBase):
     if len(ret) != 0:
       return ret
 
-    data = ''
+    data = b''
     while not self._stream.closed:
       data = self._read_stream(max(sz, self.CHUNK_SIZE))
       if data:
         break
 
     self._varz.bytes_recv(len(data))
-    self._rbuf = StringIO(data)
+    self._rbuf = BytesIO(data)
     return self._rbuf.read(sz)
 
   def getvalue(self):
@@ -64,6 +64,7 @@ class ThriftHttpTransportSink(HttpTransportSinkBase):
   def _ProcessResponse(self, response, sink_stack):
     stream = _ResponseReader(response, self._varz)
     sink_stack.AsyncProcessResponseStream(stream)
+
 
 ThriftHttpTransportSink.Builder = SinkProvider(
   ThriftHttpTransportSink, raise_on_http_error=True, url=None)

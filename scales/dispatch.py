@@ -4,7 +4,7 @@ import time
 
 import gevent
 
-from .async import AsyncResult
+from .asynchronous import AsyncResult
 from .constants import MessageProperties, SinkProperties
 from .message import (
   Deadline,
@@ -23,13 +23,20 @@ from .varz import (
   VarzBase
 )
 
-class InternalError(Exception): pass
+
+class InternalError(Exception):
+  pass
+
+
 class ScalesError(Exception):
   def __init__(self, ex, msg):
     self.inner_exception = ex
     super(ScalesError, self).__init__(msg)
 
-class ServiceClosedError(Exception): pass
+
+class ServiceClosedError(Exception):
+  pass
+
 
 class _AsyncResponseSink(ClientMessageSink):
   @staticmethod
@@ -93,6 +100,7 @@ class _AsyncResponseSink(ClientMessageSink):
     else:
       ar.set_exception(InternalError('Unknown response message of type %s'
                                      % msg.__class__))
+
 
 class MessageDispatcher(ClientMessageSink):
   """Handles dispatching incoming and outgoing messages to a client sink stack."""

@@ -11,6 +11,7 @@ from .varz import (AggregateTimer, Counter, Source, VarzBase)
 
 ROOT_LOG = logging.getLogger('scales.Resurrector')
 
+
 class ResurrectorSink(ClientMessageSink):
   """The resurrector sink monitors its underlying sink for faults, and begins
    attempting to resurrect it.

@@ -117,7 +117,7 @@ class AggregateTimer(VarzTimerBase): VARZ_TYPE = VarzType.AggregateTimer
 class VarzMeta(type):
   def __new__(mcs, name, bases, dct):
     base_name = dct['_VARZ_BASE_NAME']
-    for metric_suffix, varz_cls in dct['_VARZ'].iteritems():
+    for metric_suffix, varz_cls in dct['_VARZ'].items():
       metric_name = '%s.%s' % (base_name, metric_suffix)
       VarzReceiver.RegisterMetric(metric_name, varz_cls.VARZ_TYPE)
       varz = varz_cls(metric_name, None)
@@ -155,7 +155,7 @@ class _VarzBase(object):
 
   def __init__(self, source):
     source = VerifySource(source)
-    for k, v in self._VARZ.iteritems():
+    for k, v in self._VARZ.items():
       setattr(self, k, v.ForSource(source))
 
   def __getattr__(self, item):
@@ -223,10 +223,12 @@ class VarzReceiver(object):
       cls.VARZ_DATA[metric][source] = reservoir
     reservoir.Sample(value)
 
+
 def DefaultKeySelector(k):
   """A key selector to use for Aggregate."""
   VerifySource(k)
   return k.service, k.client_id
+
 
 class VarzAggregator(object):
   """An aggregator that rolls metrics up to the service level."""
@@ -234,6 +236,7 @@ class VarzAggregator(object):
 
   class _Agg(object):
     __slots__ = 'total', 'count', 'work'
+
     def __init__(self):
       self.total = 0.0
       self.count = 0

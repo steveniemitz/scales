@@ -3,15 +3,15 @@ from abc import abstractmethod
 import logging
 import time
 from struct import unpack
-from cStringIO import StringIO
 
 import gevent
 from gevent.queue import Queue
 
-from ..async import (
+from ..asynchronous import (
   AsyncResult,
   NamedGreenlet
 )
+from ..compat import BytesIO
 from ..constants import ChannelState
 from ..message import (
   Deadline,
@@ -35,6 +35,8 @@ from ..constants import TransportHeaders
 ROOT_LOG = logging.getLogger('scales.mux')
 
 class Tag(object):
+  __slots__ = ('_tag',)
+
   KEY = "__Tag"
 
   def __init__(self, tag):
@@ -300,10 +302,10 @@ class MuxSocketTransportSink(ClientMessageSink):
     """
     while self.isActive:
       try:
-        sz, = unpack('!i', str(self._socket.readAll(4)))
+        sz, = unpack('!i', self._socket.readAll(4))
         with self._varz.recv_time.Measure():
           with self._varz.recv_latency.Measure():
-            buf = StringIO(self._socket.readAll(sz))
+            buf = BytesIO(self._socket.readAll(sz))
         self._varz.messages_recv()
         gevent.spawn(self._ProcessReply, buf)
       except Exception as e:

@@ -4,7 +4,7 @@ import collections
 import functools
 import inspect
 
-from urlparse import urlparse, ParseResult
+from six.moves.urllib.parse import urlparse, ParseResult
 
 from .constants import (SinkProperties, SinkRole)
 from .dispatch import MessageDispatcher
@@ -39,6 +39,13 @@ class ClientProxyBuilder(object):
   _PROXY_TYPE_CACHE = {}
 
   @staticmethod
+  def _method_name(m):
+    if hasattr(m, 'func_name'):
+      return m.func_name
+    else:
+      return m.__name__
+
+  @staticmethod
   def _BuildServiceProxy(Iface):
     """Build a proxy class that intercepts all user methods on [Iface]
     and routes them to a message dispatcher.
@@ -46,24 +53,24 @@ class ClientProxyBuilder(object):
     Args:
       Iface - An interface to proxy
     """
-
-    def ProxyMethod(method_name, orig_method, async=False):
+    def ProxyMethod(method_name, orig_method, asynchronous=False):
       @functools.wraps(orig_method)
       def _ProxyMethod(self, *args, **kwargs):
         ar = self._dispatcher.DispatchMethodCall(method_name, args, kwargs)
-        return ar if async else ar.get()
+        return ar if asynchronous else ar.get()
       return _ProxyMethod
 
-    is_user_method = lambda m: (inspect.ismethod(m)
-                                and not inspect.isbuiltin(m)
-                                and not m.func_name.startswith('__')
-                                and not m.func_name.endswith('__'))
+    def is_user_method(m):
+      return ((inspect.ismethod(m) or inspect.isfunction(m))
+              and not inspect.isbuiltin(m)
+              and not ClientProxyBuilder._method_name(m).startswith('__')
+              and not ClientProxyBuilder._method_name(m).endswith('__'))
 
     # Get all methods defined on the interface.
     iface_methods = { m[0]: ProxyMethod(*m)
                       for m in inspect.getmembers(Iface, is_user_method) }
     iface_methods.pop('__init__', None)
-    iface_methods.update({ m[0] + "_async": ProxyMethod(*m, async=True)
+    iface_methods.update({ m[0] + "_async": ProxyMethod(*m, asynchronous=True)
                            for m in inspect.getmembers(Iface, is_user_method) })
 
     # Create a proxy class to intercept the interface's methods.

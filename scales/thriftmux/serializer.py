@@ -1,5 +1,7 @@
 from struct import (pack, unpack)
 
+from six import string_types
+
 from ..constants import TransportHeaders
 from ..message import (
   MethodCallMessage,
@@ -33,31 +35,35 @@ class MessageSerializer(object):
       self._thrift_serializer = ThriftMessageSerializer(service_cls)
 
   def _Marshal_Tdispatch(self, msg, buf, headers):
+    ctx = {}
+    ctx.update(msg.public_properties)
+    ctx.update(headers)
+    MessageSerializer._WriteContext(ctx, buf)
+
     headers[TransportHeaders.MessageType] = MessageType.Tdispatch
-    MessageSerializer._WriteContext(msg.public_properties, buf)
-    buf.write(pack('!hh', 0, 0)) # len(dst), len(dtab), both unsupported
+    buf.write(pack('!hh', 0, 0))  # len(dst), len(dtab), both unsupported
     self._thrift_serializer.SerializeThriftCall(msg, buf)
 
   @staticmethod
   def _Marshal_Tdiscarded(msg, buf, headers):
     headers[TransportHeaders.MessageType] = MessageType.Tdiscarded
     buf.write(pack('!BBB', *Tag(msg.which).Encode()))
-    buf.write(msg.reason)
+    buf.write(msg.reason.encode('utf-8'))
 
   @staticmethod
   def _WriteContext(ctx, buf):
     buf.write(pack('!h', len(ctx)))
-    for k, v in ctx.iteritems():
-      if not isinstance(k, basestring):
+    for k, v in ctx.items():
+      if not isinstance(k, string_types):
         raise NotImplementedError("Unsupported key type in context")
       k_len = len(k)
-      buf.write(pack('!h%ds' % k_len, k_len, k))
+      buf.write(pack('!h%ds' % k_len, k_len, k.encode('utf-8')))
       if isinstance(v, Deadline):
         buf.write(pack('!h', 16))
         buf.write(pack('!qq', v._ts, v._timeout))
-      elif isinstance(v, basestring):
+      elif isinstance(v, string_types):
         v_len = len(v)
-        buf.write(pack('!h%ds' % v_len, v_len, v))
+        buf.write(pack('!h%ds' % v_len, v_len, v.encode('utf-8')))
       else:
         raise NotImplementedError("Unsupported value type in context.")
 
@@ -77,12 +83,12 @@ class MessageSerializer(object):
     elif status == Rstatus.NACK:
       return MethodReturnMessage(error=ServerError('The server returned a NACK'))
     else:
-      return MethodReturnMessage(error=ServerError(buf.read()))
+      return MethodReturnMessage(error=ServerError(buf.read().decode('utf-8')))
 
   @staticmethod
   def _Unmarshal_Rerror(buf):
     why = buf.read()
-    return MethodReturnMessage(error=ServerError(why))
+    return MethodReturnMessage(error=ServerError(why.decode('utf-8')))
 
   def Unmarshal(self, tag, msg_type, buf):
     """Deserialize a message from a stream.

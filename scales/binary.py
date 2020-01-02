@@ -4,13 +4,14 @@ from struct import (
   unpack,
   Struct
 )
-import itertools
+
 
 class Structs(object):
   Byte  = Struct('!B')
   Int16 = Struct('!h')
   Int32 = Struct('!i')
   Int64 = Struct('!q')
+
 
 class BinaryReader(object):
   def __init__(self, buf):
@@ -40,6 +41,7 @@ class BinaryReader(object):
   def Unpack(self, fmt):
     to_read = calcsize(fmt)
     return unpack(fmt, self._buf.read(to_read))
+
 
 class BinaryWriter(object):
   def __init__(self, buf):

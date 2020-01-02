@@ -10,6 +10,12 @@ A protocol agnostic RPC client stack for python.
 * Robust load balancing and error detection / recovery.
 * Service discovery via ZooKeeper
 
+## Installing 
+
+```bash
+pip install scales-rpc
+```
+
 ## Getting started
 Getting started with scales is very simple.  For example, lets use it to do an HTTP GET of www.google.com
 

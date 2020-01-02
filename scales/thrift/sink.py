@@ -1,14 +1,14 @@
 from struct import (pack, unpack)
-from cStringIO import StringIO
 import time
 
 import gevent
 from thrift.protocol.TBinaryProtocol import TBinaryProtocolAcceleratedFactory
 
-from ..async import (
+from ..asynchronous import (
   AsyncResult,
   NoopTimeout
 )
+from ..compat import BytesIO
 from ..constants import (
   ChannelState,
   SinkProperties,
@@ -145,10 +145,10 @@ class SocketTransportSink(ClientMessageSink):
             self._socket.write(data)
         self._varz.messages_sent()
 
-        sz, = unpack('!i', str(self._socket.readAll(4)))
+        sz, = unpack('!i', self._socket.readAll(4))
         with self._varz.recv_time.Measure():
           with self._varz.recv_latency.Measure():
-            buf = StringIO(self._socket.readAll(sz))
+            buf = BytesIO(self._socket.readAll(sz))
         self._varz.messages_recv()
 
         gtimeout.cancel()
@@ -205,7 +205,7 @@ class ThriftSerializerSink(ClientMessageSink):
     self.next_sink = next_provider.CreateSink(global_properties)
 
   def AsyncProcessRequest(self, sink_stack, msg, stream, headers):
-    buf = StringIO()
+    buf = BytesIO()
     headers = {}
 
     if not isinstance(msg, MethodCallMessage):
@@ -231,6 +231,7 @@ class ThriftSerializerSink(ClientMessageSink):
       except Exception as ex:
         msg = MethodReturnMessage(error=ex)
       sink_stack.AsyncProcessResponseMessage(msg)
+
 
 ThriftSerializerSink.Builder = SinkProvider(
   ThriftSerializerSink,
