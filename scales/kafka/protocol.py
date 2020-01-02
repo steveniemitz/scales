@@ -1,5 +1,3 @@
-from cStringIO import StringIO
-
 from struct import pack, Struct
 from collections import namedtuple
 from ..binary import (
@@ -87,7 +85,7 @@ ProduceResponse = namedtuple('ProduceResponse', 'topic partition error offset')
 
 class KafkaProtocol(object):
   MSG_STRUCT = Struct('!BBii')
-  MSG_HEADER = Struct('!qii')
+  MSG_HEADER = Struct('!qiI')
   PRODUCE_HEADER = Struct('!hii')
 
   def DeserializeMessage(self, buf, msg_type):
@@ -173,7 +171,7 @@ class KafkaProtocol(object):
       crc = zlib.crc32(p, crc)
 
       # Write the header
-      writer.WriteStruct(self.MSG_HEADER, 0, len(header) + len(p) + 4, crc)
+      writer.WriteStruct(self.MSG_HEADER, 0, len(header) + len(p) + 4, crc & 0xffffffff)
       # Write the message data
       writer.WriteRaw(header)
       writer.WriteRaw(p)

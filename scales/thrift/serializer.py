@@ -10,6 +10,7 @@ from thrift.Thrift import (
 
 from ..message import MethodReturnMessage
 
+
 class MessageSerializer(object):
   """A serializer that can serialize and deserialize thrift method calls.
 

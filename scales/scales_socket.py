@@ -3,6 +3,7 @@ from __future__ import absolute_import
 from gevent.socket import socket as gsocket
 import socket
 
+
 class ScalesSocket(object):
   def __init__(self, host, port):
     self.host = host
@@ -27,7 +28,7 @@ class ScalesSocket(object):
       self.handle = gsocket(res[0], res[1])
       try:
         self.handle.connect(res[4])
-      except socket.error, e:
+      except socket.error as e:
         if res is not resolved[-1]:
           continue
         else:
@@ -40,7 +41,7 @@ class ScalesSocket(object):
       self.handle = None
 
   def readAll(self, sz):
-    buff = ''
+    buff = b''
     have = 0
     while have < sz:
       chunk = self.read(sz - have)

@@ -8,9 +8,11 @@ from ..core import Scales
 from ..loadbalancer import HeapBalancerSink
 from ..resurrector import ResurrectorSink
 
+
 class _KafkaIface(object):
   def Put(self, topic, payloads=[], acks=1):
     pass
+
 
 class Kafka(object):
   @staticmethod

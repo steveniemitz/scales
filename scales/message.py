@@ -3,6 +3,8 @@
 import sys
 import traceback
 
+from .compat import Long
+
 class Deadline(object):
   KEY = "__Deadline"
   EVENT_KEY = "__Deadline_Event"
@@ -13,8 +15,8 @@ class Deadline(object):
       timeout - The timeout in seconds
     """
     import  time
-    self._ts = long(time.time()) * 1000000000 # Nanoseconds
-    self._timeout = long(timeout * 1000000000)
+    self._ts = Long(time.time()) * 1000000000 # Nanoseconds
+    self._timeout = Long(timeout * 1000000000)
 
 
 class ClientError(Exception): pass
@@ -53,9 +55,8 @@ class Message(object):
     """Returns:
       A dict of properties intended to be transported to the server
       with the method call."""
-    return { k: v for k,v in self.properties.iteritems()
+    return { k: v for k, v in self.properties.items()
              if not k.startswith('__') }
-
 
 
 class MethodCallMessage(Message):
@@ -126,9 +127,7 @@ class MethodReturnMessage(Message):
         frame = tb.tb_frame
 
       stack = traceback.format_list(traceback.extract_stack(frame))
-      error_module = getattr(error, '__module__', '<builtin>')
-      error_name = '%s.%s' % (error_module, error.__class__.__name__)
-      stack = stack + traceback.format_exception_only(error_name, error.message)
+      stack = stack + traceback.format_exception_only(error.__class__, error)
       self.stack = stack
       # Prevent circular references
       del frame

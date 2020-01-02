@@ -4,7 +4,7 @@ import logging
 import gevent
 
 from .base import PoolSink
-from ..async import AsyncResult
+from ..asynchronous import AsyncResult
 from ..constants import (Int, ChannelState, SinkProperties, SinkRole)
 from ..sink import (
   ClientMessageSink,

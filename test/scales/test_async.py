@@ -2,7 +2,7 @@ import unittest
 
 import gevent
 
-from scales.async import AsyncResult
+from scales.asynchronous import AsyncResult
 
 class AsyncUtilTestCase(unittest.TestCase):
   def testWhenAllSuccessful(self):

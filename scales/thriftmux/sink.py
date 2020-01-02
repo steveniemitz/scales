@@ -2,11 +2,11 @@ import logging
 import random
 import time
 from struct import (pack, unpack)
-from cStringIO import StringIO
 
 import gevent
 
-from ..async import AsyncResult
+from ..asynchronous import AsyncResult
+from ..compat import BytesIO
 from ..constants import SinkProperties
 from ..message import (
   Deadline,
@@ -27,13 +27,13 @@ from ..varz import (
 )
 from .serializer import (
   MessageSerializer,
-  Tag
 )
 from .protocol import (
   MessageType,
 )
 
 ROOT_LOG = logging.getLogger('scales.thriftmux')
+
 
 class SocketTransportSink(MuxSocketTransportSink):
   def __init__(self, socket, service):
@@ -111,7 +111,7 @@ class SocketTransportSink(MuxSocketTransportSink):
     """
     discard_message = MethodDiscardMessage(tag, 'Client timeout')
     discard_message.which = tag
-    buf = StringIO()
+    buf = BytesIO()
     headers = {}
     MessageSerializer(None).Marshal(discard_message, buf, headers)
     return discard_message, buf, headers
@@ -138,7 +138,9 @@ class SocketTransportSink(MuxSocketTransportSink):
     if self._ping_ar:
       self._ping_ar.set_exception(reason)
 
+
 SocketTransportSink.Builder = SocketTransportSinkProvider(SocketTransportSink)
+
 
 class ThriftMuxMessageSerializerSink(ClientMessageSink):
   """A serializer sink that serializes thrift messages to the finagle mux
@@ -170,14 +172,13 @@ class ThriftMuxMessageSerializerSink(ClientMessageSink):
     Returns:
       A tuple of (message_type, tag)
     """
-    # Python 2.7.3 needs a string to unpack, so cast to one.
-    header, = unpack('!i', str(stream.read(4)))
+    header, = unpack('!i', stream.read(4))
     msg_type = (256 - (header >> 24 & 0xff)) * -1
     tag = ((header << 8) & 0xFFFFFFFF) >> 8
     return msg_type, tag
 
   def AsyncProcessRequest(self, sink_stack, msg, stream, headers):
-    buf = StringIO()
+    buf = BytesIO()
     headers = {}
 
     deadline = msg.properties.get(Deadline.KEY)
@@ -209,7 +210,9 @@ class ThriftMuxMessageSerializerSink(ClientMessageSink):
         msg = MethodReturnMessage(error=ex)
       sink_stack.AsyncProcessResponseMessage(msg)
 
+
 ThriftMuxMessageSerializerSink.Builder = SinkProvider(ThriftMuxMessageSerializerSink)
+
 
 class ClientIdInterceptorSink(ClientMessageSink):
   __slots__ = '_client_id',
@@ -227,6 +230,7 @@ class ClientIdInterceptorSink(ClientMessageSink):
 
   def AsyncProcessResponse(self, sink_stack, context, stream, msg):
     raise NotImplementedError("This should never be called")
+
 
 ClientIdInterceptorSink.Builder = SinkProvider(
   ClientIdInterceptorSink,

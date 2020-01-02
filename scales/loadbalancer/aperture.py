@@ -13,7 +13,7 @@ node in the balancer is handling.
 import random
 
 from .heap import HeapBalancerSink
-from ..async import AsyncResult
+from ..asynchronous import AsyncResult
 from ..constants import (ChannelState, SinkProperties, SinkRole)
 from ..sink import SinkProvider
 from ..timer_queue import LOW_RESOLUTION_TIMER_QUEUE, LOW_RESOLUTION_TIME_SOURCE
@@ -229,6 +229,7 @@ class ApertureBalancerSink(HeapBalancerSink):
       self._TryExpandAperture()
     elif aperture_load <= self._min_load and aperture_size > self._min_size:
       self._ContractAperture()
+
 
 ApertureBalancerSink.Builder = SinkProvider(
   ApertureBalancerSink,

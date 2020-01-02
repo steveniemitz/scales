@@ -23,7 +23,7 @@ from .base import (
   LoadBalancerSink,
   NoMembersError
 )
-from ..async import AsyncResult
+from ..asynchronous import AsyncResult
 from ..constants import (
   ChannelState,
   Int,
@@ -68,9 +68,9 @@ class Heap(object):
       i - The index to start at.
     """
     while True:
-      if i != 1 and heap[i] < heap[i/2]:
-        Heap.Swap(heap, i, i/2)
-        i /= 2 # FixUp(heap, i/2)
+      if i != 1 and heap[i] < heap[i//2]:
+        Heap.Swap(heap, i, i//2)
+        i //= 2 # FixUp(heap, i/2)
       else:
         break
 

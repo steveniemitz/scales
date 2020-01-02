@@ -1,8 +1,8 @@
 from collections import namedtuple
-from cStringIO import StringIO
 from struct import (pack, unpack)
 import time
 
+from ..compat import BytesIO
 from ..dispatch import MessageDispatcher
 from ..loadbalancer.serverset import StaticServerSetProvider
 from ..loadbalancer.zookeeper import Member
@@ -62,7 +62,7 @@ class KafkaTransportSink(MuxSocketTransportSink):
     return header
 
   def _ProcessReply(self, stream):
-    tag, = unpack('!i', str(stream.read(4)))
+    tag, = unpack('!i', stream.read(4))
     self._ProcessTaggedReply(tag, stream)
 
 
@@ -262,7 +262,7 @@ class KafkaSerializerSink(ClientMessageSink):
     self.next_sink = next_provider.CreateSink(global_properties)
 
   def AsyncProcessRequest(self, sink_stack, msg, stream, headers):
-    buf = StringIO()
+    buf = BytesIO()
     headers = {}
 
     try:

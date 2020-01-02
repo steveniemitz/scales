@@ -1,6 +1,7 @@
-from cStringIO import StringIO
+import codecs
 import unittest
 
+from scales.compat import BytesIO
 from scales.constants import MessageProperties
 from scales.message import MethodCallMessage
 from scales.kafka.protocol import (
@@ -15,35 +16,35 @@ from scales.kafka.sink import KafkaEndpoint
 
 class KafkaProtocolTestCase(unittest.TestCase):
   def testPutSerialization(self):
-    expected = 'AAEAAAPoAAAAAQAKdGVzdF90b3BpYwAAAAEAAAABAAAAJgAAAAAAAAAAAAAAGr0KwrwAAP////8AAAAMbWVzc2FnZV9kYXRh'.decode('base64')
+    expected = codecs.decode(b'AAEAAAPoAAAAAQAKdGVzdF90b3BpYwAAAAEAAAABAAAAJgAAAAAAAAAAAAAAGr0KwrwAAP////8AAAAMbWVzc2FnZV9kYXRh', 'base64')
     s = KafkaProtocol()
-    mcm = MethodCallMessage(None, 'Put', ('test_topic', ['message_data']), {})
+    mcm = MethodCallMessage(None, 'Put', (b'test_topic', [b'message_data']), {})
     mcm.properties[MessageProperties.Endpoint] = KafkaEndpoint('host', 0, 1)
-    buf = StringIO()
+    buf = BytesIO()
     s.SerializeMessage(mcm, buf, {})
     self.assertEqual(buf.getvalue(), expected)
 
   def testPutResponseDeserialization(self):
-    expected = 'AAAAAgAAAAEABmxvZ2hvZwAAAAEAAAAAAAAAAAAAAA5Xsw=='.decode('base64')
+    expected = codecs.decode(b'AAAAAgAAAAEABmxvZ2hvZwAAAAEAAAAAAAAAAAAAAA5Xsw==', 'base64')
     s = KafkaProtocol()
-    ret = s.DeserializeMessage(StringIO(expected), MessageType.ProduceRequest)
+    ret = s.DeserializeMessage(BytesIO(expected), MessageType.ProduceRequest)
     expected = [
-      ProduceResponse('loghog', 0, 0, 939955)
+      ProduceResponse(b'loghog', 0, 0, 939955)
     ]
     self.assertEqual(ret.return_value, expected)
 
   def testBrokerInfoDeserialization(self):
-    raw_data = 'AAAAAgAAAAIAAAABAChlYzItNTQtODEtMTA2LTg4LmNvbXB1dGUtMS5hbWF6b25hd3MuY29tAAA+QwAAAAAAKmVjMi01NC0xNTktMTEwLTE5Mi5jb21wdXRlLTEuYW1hem9uYXdzLmNvbQAAOtcAAAABAAAABmxvZ2hvZwAAAAEACQAAAAAAAAABAAAAAgAAAAEAAAAAAAAAAgAAAAAAAAAB'.decode('base64')
+    raw_data = codecs.decode(b'AAAAAgAAAAIAAAABAChlYzItNTQtODEtMTA2LTg4LmNvbXB1dGUtMS5hbWF6b25hd3MuY29tAAA+QwAAAAAAKmVjMi01NC0xNTktMTEwLTE5Mi5jb21wdXRlLTEuYW1hem9uYXdzLmNvbQAAOtcAAAABAAAABmxvZ2hvZwAAAAEACQAAAAAAAAABAAAAAgAAAAEAAAAAAAAAAgAAAAAAAAAB', 'base64')
     s = KafkaProtocol()
-    ret = s.DeserializeMessage(StringIO(raw_data), MessageType.MetadataRequest)
+    ret = s.DeserializeMessage(BytesIO(raw_data), MessageType.MetadataRequest)
     expected = MetadataResponse(
       brokers = {
-        0: BrokerMetadata(0, 'ec2-54-159-110-192.compute-1.amazonaws.com', 15063),
-        1: BrokerMetadata(1, 'ec2-54-81-106-88.compute-1.amazonaws.com', 15939)
+        0: BrokerMetadata(0, b'ec2-54-159-110-192.compute-1.amazonaws.com', 15063),
+        1: BrokerMetadata(1, b'ec2-54-81-106-88.compute-1.amazonaws.com', 15939)
       },
       topics = {
-        'loghog': {
-          0: PartitionMetadata('loghog', 0, 1, (1, 0), (0, 1))
+        b'loghog': {
+          0: PartitionMetadata(b'loghog', 0, 1, (1, 0), (0, 1))
         }
       }
     )

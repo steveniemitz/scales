@@ -1,5 +1,5 @@
 from .base import PoolSink
-from ..async import AsyncResult
+from ..asynchronous import AsyncResult
 from ..constants import (ChannelState, SinkRole)
 from ..sink import SinkProvider, SinkProperties
 

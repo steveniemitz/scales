@@ -1,4 +1,5 @@
 from abc import (ABCMeta, abstractmethod)
+from six import string_types
 
 class ServerSetProvider(ABCMeta('ABCMeta', (object,), {})):
   """Base class for providing a set of servers, as well as optionally
@@ -84,7 +85,7 @@ class ZooKeeperServerSetProvider(ServerSetProvider):
                         in the znode.
     """
     self._zk_client = None
-    if isinstance(zk_servers_or_client, basestring):
+    if isinstance(zk_servers_or_client, string_types):
       self._zk_client = self._GetZooKeeperClient(zk_servers_or_client, zk_timeout)
       self._owns_zk_client = True
     else:

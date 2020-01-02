@@ -1,6 +1,6 @@
 import gevent
 
-from scales.async import AsyncResult
+from scales.asynchronous import AsyncResult
 from scales.constants import ChannelState, SinkProperties
 from scales.core import ScalesUriParser
 from scales.message import (MethodReturnMessage, FailedFastError)

@@ -9,6 +9,7 @@ from gevent.event import Event
 
 LOG = logging.getLogger('scales.TimerQueue')
 
+
 class LowResolutionTime(object):
   """Provides a low-resolution time source with significantly lower overhead
   than calling time.time()"""
@@ -125,6 +126,7 @@ class TimerQueue(object):
 
     self._seq += 1
     timeout_args = [deadline, self._seq, False, action]
+    
     def cancel():
       timeout_args[2] = True
       # Null out to avoid holding onto references.
@@ -135,6 +137,7 @@ class TimerQueue(object):
     if self._queue[0][0] == deadline:
       self._event.set()
     return cancel
+
 
 GLOBAL_TIMER_QUEUE = TimerQueue()
 LOW_RESOLUTION_TIME_SOURCE = LowResolutionTime()

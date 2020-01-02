@@ -3,7 +3,7 @@ import time
 import gevent
 import redis
 
-from ..async import (
+from ..asynchronous import (
   AsyncResult,
   NoopTimeout
 )

@@ -10,7 +10,7 @@ import random
 import gevent
 from gevent.event import Event
 
-from ..async import AsyncResult
+from ..asynchronous import AsyncResult
 from ..constants import (
   ChannelState,
   SinkProperties,
