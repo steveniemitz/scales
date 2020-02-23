@@ -4,6 +4,7 @@ from abc import abstractmethod
 import gevent
 import requests
 from requests import exceptions
+from six import string_types
 
 from ..asynchronous import AsyncResult
 from ..constants import ChannelState, SinkProperties
@@ -93,7 +94,7 @@ class HttpTransportSink(HttpTransportSinkBase):
     kwargs = msg.kwargs.copy()
 
     data = kwargs.get('data')
-    if data and isinstance(data, basestring):
+    if data and isinstance(data, string_types):
       self._varz.bytes_sent(len(data))
 
     if url.startswith('/'):
