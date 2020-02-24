@@ -14,7 +14,7 @@ TESTS_REQUIRES = (
 
 setup(
   name='scales-rpc',
-  version='2.0.0',
+  version='2.0.1',
   author='Steve Niemitz',
   author_email='sniemitz@twitter.com',
   url='https://www.github.com/steveniemitz/scales',
