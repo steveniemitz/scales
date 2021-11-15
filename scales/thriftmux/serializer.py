@@ -51,6 +51,21 @@ class MessageSerializer(object):
     buf.write(msg.reason.encode('utf-8'))
 
   @staticmethod
+  def _Marshal_Tinit(ctx, buf):
+    for k, v in ctx.items():
+      if not isinstance(k, string_types):
+        raise NotImplementedError("Unsupported key type in context")
+      if not isinstance(v, string_types):
+        raise NotImplementedError("Unsupported value type in context")
+      k_enc = k.encode('utf-8')
+      k_len = len(k_enc)
+      buf.write(pack('!i%ds' % k_len, k_len, k_enc))
+
+      v_enc = v.encode('utf-8')
+      v_len = len(v_enc)
+      buf.write(pack('!i%ds' % v_len, v_len, v_enc))
+
+  @staticmethod
   def _WriteContext(ctx, buf):
     buf.write(pack('!h', len(ctx)))
     for k, v in ctx.items():
@@ -89,6 +104,23 @@ class MessageSerializer(object):
   def _Unmarshal_Rerror(buf):
     why = buf.read()
     return MethodReturnMessage(error=ServerError(why.decode('utf-8')))
+
+  @staticmethod
+  def _Unmarshal_Rinit(buf):
+    version, = unpack('!h', buf.read(2))
+    ret = {}
+    while True:
+      key_size_bytes = buf.read(4)
+      if not key_size_bytes:
+        break
+      key_size, = unpack('!i', key_size_bytes)
+      key_bytes = buf.read(key_size)
+
+      value_size, = unpack('!i', buf.read(4))
+      value_bytes = buf.read(value_size)
+      ret[key_bytes.decode('utf-8')] = value_bytes
+
+    return version, ret
 
   def Unmarshal(self, tag, msg_type, buf):
     """Deserialize a message from a stream.

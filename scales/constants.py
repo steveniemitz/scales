@@ -17,6 +17,8 @@ class SinkProperties(object):
   Endpoint = 'endpoint'
   ServiceInterface = 'service_iface'
   Label = 'label'
+  ServiceIdentifier = 'service_identifier'
+  OpportunisticTlsMode = 'opp_tls_mode'
 
 class MessageProperties(object):
   Endpoint = '__Endpoint'

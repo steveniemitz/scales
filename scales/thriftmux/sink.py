@@ -1,11 +1,13 @@
 import logging
 import random
+import struct
 import time
 from struct import (pack, unpack)
 
 import gevent
 
 from ..asynchronous import AsyncResult
+from ..core import (OpportunisticTls, TlsNegotiationError)
 from ..compat import BytesIO
 from ..constants import SinkProperties
 from ..message import (
@@ -36,15 +38,21 @@ ROOT_LOG = logging.getLogger('scales.thriftmux')
 
 
 class SocketTransportSink(MuxSocketTransportSink):
-  def __init__(self, socket, service):
+  _NEGOTIATE_INIT_MSG = "tinit check".encode('ASCII')
+
+  def __init__(self, socket, service, service_identifier, opp_tls_mode):
     self._ping_timeout = 5
     self._ping_msg = self._BuildHeader(1, MessageType.Tping, 0)
+    self._negotiate_1_msg = self._BuildHeader(1, MessageType.Rerr, len(self._NEGOTIATE_INIT_MSG)) + self._NEGOTIATE_INIT_MSG
     self._last_ping_start = 0
-    super(SocketTransportSink, self).__init__(socket, service)
+    super(SocketTransportSink, self).__init__(socket, service, service_identifier, opp_tls_mode)
 
   def _Init(self):
     self._ping_ar = None
     super(SocketTransportSink, self)._Init()
+
+  def _OpenImpl(self):
+    super(SocketTransportSink, self)._OpenImpl(start_loops=False)
 
   @staticmethod
   def _EncodeTag(tag):
@@ -56,6 +64,13 @@ class SocketTransportSink(MuxSocketTransportSink):
       total_len,
       msg_type,
       *self._EncodeTag(tag))
+
+  def _RecvMsg(self):
+    buf = self._RecvOne()
+    if not buf:
+      return None, None, None
+
+    return ThriftMuxMessageSerializerSink.ReadHeader(buf) + (buf,)
 
   def _PingLoop(self):
     """Periodically pings the remote server."""
@@ -94,10 +109,70 @@ class SocketTransportSink(MuxSocketTransportSink):
       ar.set_exception(Exception('Ping timed out'))
       self._Shutdown('Ping Timeout')
 
+  def _DoNegotiate(self):
+    return self._DoNegotiatePhase1()
+
+  def _DoNegotiatePhase1(self):
+    self._log.debug('Sending negotiate phase 1 message.')
+    self._send_queue.put((self._negotiate_1_msg, self._EMPTY_DCT))
+    self._SendOne()
+    msg_type, tag, buf = self._RecvMsg()
+
+    if tag == 1 and msg_type in (MessageType.BAD_Rerr, MessageType.Rerr) and buf.read() == self._NEGOTIATE_INIT_MSG:
+      return self._DoNegotiatePhase2()
+    else:
+      raise NotImplementedError()
+
+  def _DoNegotiatePhase2(self):
+    self._log.debug('Sending negotiate phase 2 message.')
+    buf = BytesIO()
+    buf.write(pack('!h', 1))
+    MessageSerializer._Marshal_Tinit({
+      'tls': 'desired',
+    }, buf)
+
+    msg = self._BuildHeader(1, MessageType.Tinit, buf.tell()) + buf.getvalue()
+    self._send_queue.put((msg, self._EMPTY_DCT))
+    self._SendOne()
+    msg_type, tag, buf = self._RecvMsg()
+
+    if tag == 1 and msg_type == MessageType.Rinit:
+      self._DoTlsNegotiation(buf)
+
+    return self._DoNegotiateComplete()
+
+  def _UpgradeSocket(self):
+    self._socket.upgrade_to_tls(self._service_identifier)
+
+  def _DoTlsNegotiation(self, msg):
+    version, headers = MessageSerializer._Unmarshal_Rinit(msg)
+    server_tls_mode = headers.get('tls', OpportunisticTls.Off.encode('utf-8')).decode('utf-8')
+
+    def fail():
+      raise TlsNegotiationError('Error negotiating TLS connection, client wanted \'%s\' but server wanted \'%s\'' % (self._opp_tls_mode, server_tls_mode))
+
+    if server_tls_mode == OpportunisticTls.Required:
+      if self._opp_tls_mode != OpportunisticTls.Off:
+        self._UpgradeSocket()
+      else:
+        fail()
+    elif server_tls_mode == OpportunisticTls.Desired:
+      if self._opp_tls_mode != OpportunisticTls.Off:
+        self._UpgradeSocket()
+    elif server_tls_mode == OpportunisticTls.Off:
+      if self._opp_tls_mode == OpportunisticTls.Required:
+        fail()
+
+  def _DoNegotiateComplete(self):
+    self._spawn_recv_loop()
+    self._spawn_send_loop()
+
   def _CheckInitialConnection(self):
-    ar = self._SendPingMessage()
-    ar.get()
-    self._log.debug('Ping successful')
+    if self._service_identifier:
+      self._DoNegotiate()
+    else:
+      self._DoNegotiateComplete()
+
     self._greenlets.append(self._SpawnNamedGreenlet('Ping Loop', self._PingLoop))
 
   @staticmethod
@@ -124,7 +199,7 @@ class SocketTransportSink(MuxSocketTransportSink):
   def _ProcessReply(self, stream):
     try:
       msg_type, tag = ThriftMuxMessageSerializerSink.ReadHeader(stream)
-      if tag == 1 and msg_type == MessageType.Rping: #Ping
+      if tag == 1 and msg_type == MessageType.Rping:
         self._OnPingResponse(msg_type, stream)
       elif tag != 0:
         self._ProcessTaggedReply(tag, stream)
@@ -172,9 +247,8 @@ class ThriftMuxMessageSerializerSink(ClientMessageSink):
     Returns:
       A tuple of (message_type, tag)
     """
-    header, = unpack('!i', stream.read(4))
-    msg_type = (256 - (header >> 24 & 0xff)) * -1
-    tag = ((header << 8) & 0xFFFFFFFF) >> 8
+    msg_type, t1, t2, t3 , = unpack('!bBBB', stream.read(4))
+    tag = t1 << 24 | t2 << 16 | t3
     return msg_type, tag
 
   def AsyncProcessRequest(self, sink_stack, msg, stream, headers):

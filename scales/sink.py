@@ -347,9 +347,11 @@ def SocketTransportSinkProvider(sink_cls):
     def CreateSink(self, properties):
       server = properties[SinkProperties.Endpoint]
       service = properties[SinkProperties.Label]
+      service_identifier = properties.get(SinkProperties.ServiceIdentifier)
+      opp_tls_mode = properties.get(SinkProperties.OpportunisticTlsMode) 
       sock = ScalesSocket(server.host, server.port)
       healthy_sock = VarzSocketWrapper(sock, service)
-      sink = self.SINK_CLS(healthy_sock, service)
+      sink = self.SINK_CLS(healthy_sock, service, service_identifier, opp_tls_mode)
       return sink
 
     @property

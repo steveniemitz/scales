@@ -417,6 +417,8 @@ class VarzSocketWrapper(object):
     self._varz.bytes_recv(sz)
     return buff
 
+  def upgrade_to_tls(self, service_identifier):
+    self._socket.upgrade_to_tls(service_identifier)
 
 class MonoClock(object):
   """A clock whose value is guaranteed to always be increasing.

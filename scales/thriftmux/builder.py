@@ -20,8 +20,10 @@ class ThriftMux(object):
       .WithSink(SocketTransportSink.Builder())
 
   @staticmethod
-  def NewClient(Iface, uri, timeout=10, client_id=None):
+  def NewClient(Iface, uri, timeout=10, client_id=None, service_identifier=None, opportunistic_tls=None):
     return ThriftMux.NewBuilder(Iface, client_id=client_id) \
       .SetUri(uri) \
       .SetTimeout(timeout) \
+      .SetServiceIdentifier(service_identifier) \
+      .SetOpportunisticTls(opportunistic_tls) \
       .Build()

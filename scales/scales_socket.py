@@ -2,7 +2,7 @@ from __future__ import absolute_import
 
 from gevent.socket import socket as gsocket
 import socket
-
+from scales import key_material
 
 class ScalesSocket(object):
   def __init__(self, host, port):
@@ -22,10 +22,15 @@ class ScalesSocket(object):
       0,
       socket.AI_PASSIVE | socket.AI_ADDRCONFIG)
 
+  def _create_socket(self, af, kind):
+    sock = gsocket(af, kind)
+    return sock
+
+
   def open(self):
     resolved = self._resolveAddr()
     for res in resolved:
-      self.handle = gsocket(res[0], res[1])
+      self.handle = self._create_socket(res[0], res[1])
       try:
         self.handle.connect(res[4])
       except socket.error as e:
@@ -65,3 +70,22 @@ class ScalesSocket(object):
         raise EOFError()
       sent += plus
       buff = buff[plus:]
+
+  def upgrade_to_tls(self, service_identifier):
+    from gevent.ssl import SSLContext, SSLSocket
+    import ssl
+    ctx = SSLContext()
+    ctx.check_hostname = False
+
+    chain, key, crt = key_material.resolve_from_service_identifier(service_identifier)
+
+    ctx.load_verify_locations(chain)
+    ctx.load_cert_chain(crt, key)
+
+    self.handle = SSLSocket(
+      sock=self.handle,
+      server_side=False,
+      cert_reqs=ssl.CERT_REQUIRED,
+      suppress_ragged_eofs=False,
+      _context=ctx
+    )

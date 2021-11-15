@@ -13,6 +13,7 @@ from ..asynchronous import (
 )
 from ..compat import BytesIO
 from ..constants import ChannelState
+from ..core import OpportunisticTls
 from ..message import (
   Deadline,
   ClientError,
@@ -136,8 +137,17 @@ class MuxSocketTransportSink(ClientMessageSink):
       'transport_latency': AverageTimer
     }
 
-  def __init__(self, socket, service):
+  def __init__(self, socket, service, service_identifier, opp_tls_mode):
     super(MuxSocketTransportSink, self).__init__()
+    self._service_identifier = service_identifier
+    
+    if opp_tls_mode:
+      self._opp_tls_mode = opp_tls_mode
+    elif service_identifier:
+      self._opp_tls_mode = OpportunisticTls.Desired
+    else:
+      self._opp_tls_mode = OpportunisticTls.Off
+      
     self._socket = socket
     self._state = ChannelState.Idle
     self._log = self.SINK_LOG.getChild('[%s.%s:%d]' % (
@@ -179,12 +189,21 @@ class MuxSocketTransportSink(ClientMessageSink):
       *args,
       **kwargs)
 
-  def _OpenImpl(self):
+  def _spawn_recv_loop(self):
+    self._greenlets.append(self._SpawnNamedGreenlet('Recv Loop', self._RecvLoop))
+    
+  def _spawn_send_loop(self):
+    self._greenlets.append(self._SpawnNamedGreenlet('Send Loop', self._SendLoop))
+    
+
+  def _OpenImpl(self, start_loops=True):
     try:
       self._log.debug('Opening transport.')
       self._socket.open()
-      self._greenlets.append(self._SpawnNamedGreenlet('Recv Loop', self._RecvLoop))
-      self._greenlets.append(self._SpawnNamedGreenlet('Send Loop', self._SendLoop))
+
+      if start_loops:
+        self._spawn_recv_loop()
+        self._spawn_send_loop()
 
       self._CheckInitialConnection()
       self._log.debug('Open successful')
@@ -192,7 +211,8 @@ class MuxSocketTransportSink(ClientMessageSink):
       self._varz.active(1)
     except Exception as e:
       self._log.error('Exception opening socket')
-      self._open_result.set_exception(e)
+      if self._open_result:
+        self._open_result.set_exception(e)
       self._Shutdown('Open failed')
       raise
 
@@ -277,22 +297,48 @@ class MuxSocketTransportSink(ClientMessageSink):
     Note: Messages in the queue have already been serialized into wire format.
     """
     while self.isActive:
-      try:
-        payload, dct = self._send_queue.get()
-        queue_len = self._send_queue.qsize()
-        self._varz.send_queue_size(queue_len)
-        # HandleTimeout sets up the transport level timeout handling
-        # for this message.  If the message times out in transit, this
-        # transport will handle sending a Tdiscarded to the server.
-        if self._HandleTimeout(dct): continue
-
-        with self._varz.send_time.Measure():
-          with self._varz.send_latency.Measure():
-            self._socket.write(payload)
-        self._varz.messages_sent()
-      except Exception as e:
-        self._Shutdown(e)
+      if not self._SendOne():
         break
+
+  def _SendOne(self):
+    try:
+      tup = self._send_queue.get()
+      if len(tup) == 2:
+        payload, dct = tup
+        evt = None
+      else:
+        payload, dct, evt = tup
+
+      queue_len = self._send_queue.qsize()
+      self._varz.send_queue_size(queue_len)
+      # HandleTimeout sets up the transport level timeout handling
+      # for this message.  If the message times out in transit, this
+      # transport will handle sending a Tdiscarded to the server.
+      if self._HandleTimeout(dct):
+        return True
+
+      with self._varz.send_time.Measure():
+        with self._varz.send_latency.Measure():
+          self._socket.write(payload)
+      self._varz.messages_sent()
+      if evt:
+        evt.set()
+      return True
+    except Exception as e:
+      self._Shutdown(e)
+      return False
+
+  def _RecvOne(self):
+    try:
+      sz, = unpack('!i', self._socket.readAll(4))
+      with self._varz.recv_time.Measure():
+        with self._varz.recv_latency.Measure():
+          buf = BytesIO(self._socket.readAll(sz))
+      self._varz.messages_recv()
+      return buf
+    except Exception as e:
+      self._Shutdown(e)
+      return None
 
   def _RecvLoop(self):
     """Dispatch messages from the remote server to their recipient.
@@ -301,16 +347,11 @@ class MuxSocketTransportSink(ClientMessageSink):
     reads the message off the wire.
     """
     while self.isActive:
-      try:
-        sz, = unpack('!i', self._socket.readAll(4))
-        with self._varz.recv_time.Measure():
-          with self._varz.recv_latency.Measure():
-            buf = BytesIO(self._socket.readAll(sz))
-        self._varz.messages_recv()
-        gevent.spawn(self._ProcessReply, buf)
-      except Exception as e:
-        self._Shutdown(e)
+      buf = self._RecvOne()
+      if not buf:
         break
+
+      gevent.spawn(self._ProcessReply, buf)
 
   @abstractmethod
   def _ProcessReply(self, stream):

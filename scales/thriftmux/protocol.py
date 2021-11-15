@@ -12,6 +12,9 @@ class MessageType(Enum):
   Tdiscarded = 66
   BAD_Tdiscarded = -62
 
+  Tinit = 68
+  Rinit = -68
+
 
 class Rstatus(Enum):
   OK = 0

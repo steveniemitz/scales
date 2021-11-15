@@ -160,6 +160,8 @@ class Scales(object):
       self._properties = {}
       self._stack = []
       self._open_timeout = None
+      self._service_identifier = None
+      self._opp_tls = None
 
     @property
     def name(self):
@@ -237,6 +239,16 @@ class Scales(object):
       self._name = name
       return self
 
+    def SetServiceIdentifier(self, service_identifier):
+      self._service_identifier = service_identifier
+      return self
+
+    def SetOpportunisticTls(self, level):
+      if level is not None and level not in OpportunisticTls._valid_levels:
+        raise ValueError('OpportunisticTls level {} is invalid, expected one of {}', level, OpportunisticTls._valid_levels)
+      self._opp_tls = level
+      return self
+
     def WithSink(self, sink_params):
       self._stack.append(sink_params)
       return self
@@ -289,6 +301,8 @@ class Scales(object):
       properties = {
         SinkProperties.Label: self.name,
         SinkProperties.ServiceInterface: self._service,
+        SinkProperties.ServiceIdentifier: self._service_identifier,
+        SinkProperties.OpportunisticTlsMode: self._opp_tls
       }
       properties.update(self._properties)
 
@@ -317,3 +331,21 @@ class Scales(object):
       A client builder for the interface.
     """
     return Scales.ClientBuilder(Iface)
+
+
+class ServiceIdentifier(object):
+  def __init__(self, role, service, env, zone):
+    self.role = role
+    self.service = service
+    self.env = env
+    self.zone = zone
+
+class OpportunisticTls:
+  Off = 'off'
+  Desired = 'desired'
+  Required = 'required'
+
+  _valid_levels = { Off, Desired, Required }
+
+class TlsNegotiationError(Exception):
+  pass
